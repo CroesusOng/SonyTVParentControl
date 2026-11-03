@@ -49,6 +49,16 @@ p { margin: 6px 0; }
 .ok { color: var(--ok); }
 .warn { color: var(--warn); }
 
+/*
+ * hidden is a promise that the element is not rendered, and no layout rule has
+ * standing to break it -- which is what !important is for. Without this, any class
+ * carrying a display wins over the UA default on the same element: .screen below did
+ * exactly that, and the signed-out page rendered the whole empty dashboard under the
+ * sign-in gate for anyone who scrolled. Scoping it to .screen would fix today and
+ * leave the next class to rediscover it.
+ */
+[hidden] { display: none !important; }
+
 .screen { display: flex; flex-direction: column; gap: 16px; }
 
 /* --- first run --- */
