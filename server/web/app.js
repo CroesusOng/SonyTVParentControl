@@ -683,11 +683,35 @@ async function afterSignIn() {
   startPolling();
 }
 
+/*
+ * Everything that can go wrong on the way in, said in words you can act on.
+ *
+ * Without this the server's error codes reach the screen raw — the most likely one
+ * being `bad_setup_code`, from a typo in an eight digit number, which tells you
+ * nothing about the fact that the code changes every time the backend restarts.
+ */
+const GATE_MESSAGES = {
+  // server
+  bad_setup_code: '设置码不对。它只对服务端当前这次运行有效 —— 重启过就换了一个新的,到日志里重新看一下。',
+  signin_required: '还没登录。先按「Face ID 登录」。',
+  reauth_required: 'Face ID 过期了,再验一次就好。',
+  register_begin_failed: '服务端没能开始注册。把这句话告诉我,我去看日志。',
+  register_failed: '这枚通行密钥没能存下来。再试一次;连续失败就告诉我。',
+  login_failed: '这枚通行密钥服务端不认。可能是重装过后端、或者 state.json 被清过 —— 那就要重新注册。',
+  // webauthn, as the browser names them
+  NotAllowedError: 'Face ID 没通过,或者被取消了。如果你并没有取消,检查一下 iCloud 钥匙串是不是关着 —— 通行密钥要靠它才能保存。',
+  InvalidStateError: '这台手机已经注册过了。直接按「Face ID 登录」。',
+  NotSupportedError: '这个浏览器不支持通行密钥。用 Safari,并且确认地址是 https:// 开头的。',
+  SecurityError: '页面不在安全上下文里,通行密钥用不了。确认地址是 https:// 开头,不是 http://。',
+  AbortError: '操作被打断了,再按一次。',
+};
+
 function gateError(error) {
-  $('gate-error').hidden = false;
-  $('gate-error').textContent = error.name === 'NotAllowedError'
-    ? 'Face ID 没通过,或者被取消了。'
-    : error.message;
+  const node = $('gate-error');
+  node.hidden = false;
+  node.textContent = GATE_MESSAGES[error.code]
+    || GATE_MESSAGES[error.name]
+    || error.message;
 }
 
 /* ------------------------------------------------------------------ wire up */
