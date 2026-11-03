@@ -73,7 +73,22 @@ async function api(method, path, body) {
   });
   if (response.status === 204) return null;
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // Not JSON at all. The usual cause is a gateway in front of the Pi — behind
+      // Cloudflare Access an expired session answers API calls with an HTML login
+      // page. Say that, rather than surfacing a parse error nobody can act on.
+      throw Object.assign(new Error('前面的网关把请求拦下了,刷新页面重新登录一次'), {
+        code: 'gateway_html',
+        status: response.status,
+      });
+    }
+  }
+
   if (!response.ok) {
     throw Object.assign(new Error(data?.detail || data?.error || `HTTP ${response.status}`), {
       code: data?.error,

@@ -185,6 +185,10 @@ func hashToken(token string) string {
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// Behind Cloudflare Tunnel there is a CDN between the phone and this process.
+	// Nothing here is ever cacheable, and a cached escape code or device list would be
+	// a genuine problem, so say so explicitly rather than relying on default heuristics.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		log.Printf("write response: %v", err)

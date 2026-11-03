@@ -49,7 +49,7 @@ func main() {
 	}
 
 	authManager, err := auth.NewManager(
-		st, cfg.RPID, "BraviaGuard", cfg.Origins, setupCode, cfg.TLSEnabled(),
+		st, cfg.RPID, "BraviaGuard", cfg.Origins, setupCode, cfg.CookiesSecure(),
 	)
 	if err != nil {
 		log.Fatalf("webauthn: %v", err)
@@ -82,11 +82,22 @@ func main() {
 		_ = httpServer.Shutdown(ctx)
 	}()
 
-	if cfg.TLSEnabled() {
+	switch {
+	case cfg.TLSEnabled():
 		err = httpServer.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile)
-	} else {
-		log.Println("WARNING: running without TLS. Face ID will not work — WebAuthn " +
-			"needs a secure context. Use this only to bring the TV side up.")
+
+	case cfg.BehindProxy():
+		// Plain HTTP here, but the origins are https, so something in front is
+		// terminating TLS — a Cloudflare Tunnel or a reverse proxy. The browser is on
+		// a secure context, so Face ID works and session cookies are still marked
+		// Secure; see config.CookiesSecure.
+		log.Printf("serving plain HTTP behind a TLS terminator (origins: %v)", cfg.Origins)
+		err = httpServer.ListenAndServe()
+
+	default:
+		log.Println("WARNING: no TLS anywhere — the origins are not https. Face ID " +
+			"will not work, because WebAuthn needs a secure context. Use this only " +
+			"to bring the TV side up.")
 		err = httpServer.ListenAndServe()
 	}
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {

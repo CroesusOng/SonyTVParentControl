@@ -3,8 +3,10 @@
 #   rootful:   /etc/containers/systemd/braviaguard.container
 # then:  systemctl --user daemon-reload && systemctl --user start braviaguard
 #
-# Edit BG_ORIGINS before first start: WebAuthn binds every passkey to one exact origin,
-# and changing it later invalidates the passkeys already registered.
+# Settings come from /etc/braviaguard/braviaguard.env -- create it from
+# braviaguard.env.example first. BG_ORIGINS in particular must be right before the
+# first start: WebAuthn binds every passkey to one exact origin, and changing it later
+# invalidates the passkeys already registered.
 
 [Unit]
 Description=BraviaGuard parental control backend
@@ -23,15 +25,13 @@ AutoUpdate=local
 Network=host
 
 Volume=braviaguard-data:/var/lib/braviaguard:Z
-# Where certbot/lego leaves the certificate. Read-only: the server only ever reads it.
-Volume=/etc/braviaguard/certs:/certs:ro,Z
+# Mounted at the same path the host uses, so one env file serves both this and the
+# plain-systemd unit. Read-only: the server only ever reads the certificate.
+Volume=/etc/braviaguard/certs:/etc/braviaguard/certs:ro,Z
 
-Environment=BG_DATA_DIR=/var/lib/braviaguard
-Environment=BG_LISTEN=:8443
-Environment=BG_ORIGINS=https://tv.example.com:8443
-Environment=BG_TLS_CERT=/certs/fullchain.pem
-Environment=BG_TLS_KEY=/certs/privkey.pem
-Environment=BG_TZ=Asia/Shanghai
+# Everything house-specific lives here and is not in git. Copy
+# braviaguard.env.example to this path and edit it before the first start.
+EnvironmentFile=/etc/braviaguard/braviaguard.env
 
 User=10001:10001
 ReadOnly=true

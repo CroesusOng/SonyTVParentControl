@@ -19,8 +19,8 @@ WebAuthn 把每个凭据绑死在一个 origin 上。换域名、换端口、从
 装好家长端、自己试过一次解锁。否则第一次拦截会变成一个你必须立刻到场处理的事故。
 
 另外有一个顺序陷阱:**配对码接口 `POST /api/parent/pairing-code` 要 Face ID**。
-也就是说「先用 HTTP 跑通电视端、证书以后再配」这条路走不通 ——
-没 HTTPS 就没 Face ID,没 Face ID 就拿不到配对码。所以证书排在配对前面。
+也就是说「先用 HTTP 跑通电视端、HTTPS 以后再说」这条路走不通 ——
+没 HTTPS 就没 Face ID,没 Face ID 就拿不到配对码。所以域名/隧道排在配对前面。
 
 ---
 
@@ -64,20 +64,32 @@ overlay 能不能抢到 D-pad 焦点)都在拦截层,而它们**不需要后端�
 
 ---
 
-## 阶段 2 — 定域名,配证书 🧑(我能写脚本,token 和 sudo 得你来) ~20-40 分钟
+## 阶段 2 — 把域名接到 Cloudflare Tunnel 🧑 ~10 分钟
 
-照 [TLS.md](TLS.md),推荐**自有域名 + Let's Encrypt DNS-01**:
-不用端口转发、不用公网能访问到 Pi、iPhone 上不用装任何证书。
+用隧道的话这一步比签证书简单得多:**不用证书、不用续期、不用端口转发、不用 A 记录**。
+细节和坑在 [TLS.md](TLS.md) 方案一。
 
-- [ ] 决定域名,比如 `tv.yourdomain.com`。**这个值之后不能改**
-- [ ] DNS 加 A 记录指向 **Pi 的内网 IP**(公网解析出私有地址,外面的人拿不到任何东西)
-- [ ] Pi 上 certbot DNS-01 签证书,放到 `/etc/braviaguard/certs/`
-- [ ] 装续期 hook(TLS.md 里有现成的)
+- [ ] Pi 上跑 `cloudflared`
+- [ ] Zero Trust → Networks → Tunnels → 加一条 Public Hostname:
 
-没有自己的域名的话,DuckDNS 免费域名走同一套 DNS-01 也行,证书同样公信。
+  | 字段 | 值 |
+  |---|---|
+  | Subdomain | `tv` |
+  | Domain | 你的域名 |
+  | Service Type | `HTTP` |
+  | URL | `localhost:8443` |
 
-**成功标准:** Mac 上 `curl -v https://tv.yourdomain.com:8443/healthz` 在证书校验上不报错
-(这时还连不上是正常的,后端还没起)。
+- [ ] 确认这个 hostname 上**没有 Cloudflare Access 策略**(或者设成 bypass)
+- [ ] 记下 **Pi 的内网 IP** —— 电视要用,它不走隧道
+
+**三个必须记住的点:**
+
+1. **`BG_ORIGINS` 不带端口** —— Cloudflare 在 443 上服务,浏览器发的 Origin 就是
+   `https://tv.你的域名`。带了 `:8443` 所有 passkey 都认证失败。
+2. **电视直连内网 IP,不走隧道** —— 否则宽带一断,明明在同一个交换机上的电视就连不上 Pi。
+3. **家长端现在暴露在公网了** —— 挡在前面的只有 passkey。好处是出门也能解锁。
+
+**成功标准:** 后端起来之后(阶段 3),手机上 `https://tv.你的域名` 能打开且没有证书警告。
 
 ---
 
@@ -87,12 +99,15 @@ overlay 能不能抢到 D-pad 焦点)都在拦截层,而它们**不需要后端�
 
 - [ ] 交叉编译 linux/arm64(`scripts/build-server.sh`)
 - [ ] 按你的习惯选 **podman quadlet** 或**裸 systemd**(两份 unit 都写好了)
-- [ ] 填 `BG_ORIGINS` / `BG_TZ` / 证书路径
+- [ ] 写 `/etc/braviaguard/braviaguard.env`(从 `braviaguard.env.example` 复制)
+      —— 这个文件**不在 git 里**,家里特有的值都在这
 - [ ] 装 avahi service,这样电视能自动发现,不用遥控器拼 URL
 - [ ] 从日志里读出 **SETUP CODE** 给你
 
-**成功标准:** `curl https://tv.yourdomain.com:8443/healthz` 返回 `ok`,
-iPhone Safari 打开能看到登录页且**地址栏没有证书警告**。
+**成功标准:**
+- Pi 上 `curl http://localhost:8443/healthz` 返回 `ok`
+- 启动日志里有 `serving plain HTTP behind a TLS terminator`(说明它认出了隧道)
+- iPhone Safari 打开 `https://tv.你的域名` 看到登录页,**地址栏没有证书警告**
 
 ---
 
@@ -141,13 +156,18 @@ iPhone Safari 打开能看到登录页且**地址栏没有证书警告**。
 
 ## 我需要你给我的东西
 
-| | 用在哪 |
-|---|---|
-| 你定的域名 | 阶段 2、3 —— 定了就不能改 |
-| Pi 的 ssh 地址和用户 | 阶段 3 |
-| podman quadlet 还是裸 systemd | 阶段 3(两份 unit 都现成) |
-| 时区确认(默认写的 `Asia/Shanghai`) | 日/周边界按它算 |
-| 阶段 1 的结果 | 遮罩和 D-pad 到底行不行 |
+| | 用在哪 | 状态 |
+|---|---|---|
+| 域名 | 阶段 2、3 —— 定了就不能改 | ✅ 已定 |
+| Pi 的 ssh 地址和用户 | 阶段 3 | ⬜ |
+| Pi 的内网 IP | 电视直连用 | ⬜ |
+| podman quadlet 还是裸 systemd | 阶段 3(两份 unit 都现成) | ⬜ |
+| 时区确认(默认 `Asia/Shanghai`) | 日/周边界按它算 | ⬜ |
+| 阶段 1 的结果 | 遮罩和 D-pad 到底行不行 | ⬜ |
+
+> 文档里一律用 `tv.example.com` 占位。真实域名不进 git —— 这个仓库在 GitHub 上,
+> 而家长端现在是公网可达的,没必要让「这个域名跑的是什么、有哪些接口」变得可搜索。
+> 真实值只存在 Pi 上那个 `braviaguard.env` 里。
 
 ## 还没解决的事
 

@@ -4,6 +4,9 @@
 #   sudo useradd --system --home /var/lib/braviaguard --shell /usr/sbin/nologin braviaguard
 #   sudo install -o braviaguard -g braviaguard -d /var/lib/braviaguard
 #   sudo install -m755 braviaguardd /usr/local/bin/braviaguardd
+#   sudo install -d -m700 /etc/braviaguard
+#   sudo install -m600 braviaguard.env.example /etc/braviaguard/braviaguard.env
+#   sudoedit /etc/braviaguard/braviaguard.env
 #   sudo systemctl enable --now braviaguard
 
 [Unit]
@@ -19,12 +22,9 @@ ExecStart=/usr/local/bin/braviaguardd
 Restart=always
 RestartSec=5
 
-Environment=BG_DATA_DIR=/var/lib/braviaguard
-Environment=BG_LISTEN=:8443
-Environment=BG_ORIGINS=https://tv.example.com:8443
-Environment=BG_TLS_CERT=/etc/braviaguard/certs/fullchain.pem
-Environment=BG_TLS_KEY=/etc/braviaguard/certs/privkey.pem
-Environment=BG_TZ=Asia/Shanghai
+# Everything house-specific lives here and is not in git. Copy
+# braviaguard.env.example to this path and edit it before the first start.
+EnvironmentFile=/etc/braviaguard/braviaguard.env
 
 # It reads certificates and writes one directory. Nothing else.
 NoNewPrivileges=true

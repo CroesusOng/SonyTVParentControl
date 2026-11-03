@@ -21,6 +21,9 @@ server/dist/
 
 # Runtime data (never commit a family's actual policy or usage)
 server/data/
+# House-specific deployment settings; only the .example belongs in git
+braviaguard.env
+!braviaguard.env.example
 *.pem
 *.key
 !web/**/*.key

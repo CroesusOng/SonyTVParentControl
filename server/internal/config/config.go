@@ -23,6 +23,27 @@ type Config struct {
 
 func (c Config) TLSEnabled() bool { return c.CertFile != "" && c.KeyFile != "" }
 
+// CookiesSecure reports whether session cookies should carry the Secure flag.
+//
+// It keys off the public origin, not off local TLS. Behind Cloudflare Tunnel or any
+// reverse proxy, this process serves plain HTTP while the browser is on HTTPS — judging
+// by TLSEnabled() there would drop the Secure flag on a cookie that travels over HTTPS
+// the whole way the browser can see.
+func (c Config) CookiesSecure() bool {
+	if len(c.Origins) == 0 {
+		return false
+	}
+	for _, origin := range c.Origins {
+		if !strings.HasPrefix(origin, "https://") {
+			return false
+		}
+	}
+	return true
+}
+
+// BehindProxy is true when TLS is terminated somewhere in front of this process.
+func (c Config) BehindProxy() bool { return !c.TLSEnabled() && c.CookiesSecure() }
+
 // Load reads BG_* variables. Everything has a working default except the origin, which
 // cannot be guessed: WebAuthn ties every passkey to one exact origin, and a passkey
 // registered against the wrong one simply will not work.

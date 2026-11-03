@@ -116,8 +116,12 @@ cd server && go test ./... && go vet ./...
 
 ## 3. 部署后端到树莓派
 
-先读 **[docs/TLS.md](docs/TLS.md)** —— 证书必须在第一次启动前配好,
-因为 **`BG_ORIGINS` 改了,已注册的 passkey 全部失效**。
+先读 **[docs/TLS.md](docs/TLS.md)** —— HTTPS 必须在第一次注册 passkey 之前就位,
+因为 **`BG_ORIGINS` 改了,已注册的 passkey 全部失效**。最省事的是
+**Cloudflare Tunnel**:不用证书、不用续期、不用端口转发。
+
+部署用的那些值放在 `/etc/braviaguard/braviaguard.env`(从
+`server/deploy/braviaguard.env.example` 复制),两种部署方式读同一个文件,**不进 git**。
 
 **选项 A:交叉编译后直接跑**(最省事,Pi 上不用装 Go)
 
@@ -158,10 +162,10 @@ sudo systemctl reload avahi-daemon
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `BG_ORIGINS` | **必填** | 手机上打开的那个地址,一字不差。WebAuthn 把 passkey 绑死在它上面 |
+| `BG_ORIGINS` | **必填** | 手机上打开的那个地址,一字不差。443 上服务就**不要带端口**。WebAuthn 把 passkey 绑死在它上面 |
 | `BG_DATA_DIR` | `/var/lib/braviaguard` | `state.json` 和 `usage.json` 放哪 |
 | `BG_LISTEN` | `:8443` | |
-| `BG_TLS_CERT` / `BG_TLS_KEY` | 空 | 都不填就是 HTTP,**那样 Face ID 用不了** |
+| `BG_TLS_CERT` / `BG_TLS_KEY` | 空 | 由本进程终结 TLS 时才填。前面有 Cloudflare Tunnel 或反代时**留空** —— 服务端会发现 origin 是 https,照样把 cookie 标成 Secure |
 | `BG_RP_ID` | 从 origin 推导 | WebAuthn RP ID,就是域名 |
 | `BG_TZ` | `Local` | 日/周边界按这个时区算 |
 | `BG_SETUP_CODE` | 随机生成 | 不填就每次启动随机一个,打在日志里 |
