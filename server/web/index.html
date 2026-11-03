@@ -40,6 +40,15 @@
   <div id="gate-login" hidden>
     <button id="btn-login" class="primary big">Face ID 登录</button>
     <button id="btn-register-more" class="ghost">这台手机还没注册过</button>
+
+    <div id="gate-enroll" hidden>
+      <label class="field">
+        <span>这台手机是谁的</span>
+        <input id="enroll-name" type="text" autocomplete="name" placeholder="妈妈 / 爸爸" enterkeyhint="done">
+      </label>
+      <button id="btn-register-go" class="primary big">用已注册的手机授权</button>
+      <p class="muted small">先要一次已注册手机的 Face ID:同一台手机直接验,另一台手机扫屏幕上出现的二维码。</p>
+    </div>
   </div>
 
   <p id="gate-error" class="error" hidden></p>

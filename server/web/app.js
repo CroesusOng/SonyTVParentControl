@@ -723,10 +723,22 @@ $('btn-register').onclick = async () => {
   } catch (error) { gateError(error); }
 };
 
-$('btn-register-more').onclick = async () => {
+/*
+ * Adding a second phone asks for a name instead of defaulting to one. Nothing in
+ * the app can change a parent's name afterwards — renaming means hand-editing
+ * state.json on the Pi — so the moment the passkey is created is the only moment
+ * it can be set, and that moment is worth one text field.
+ */
+$('btn-register-more').onclick = () => {
+  $('btn-register-more').hidden = true;
+  $('gate-enroll').hidden = false;
+  $('enroll-name').focus();
+};
+
+$('btn-register-go').onclick = async () => {
   try {
     await login();                       // an existing parent authorises the new phone
-    await register('家长', '');
+    await register($('enroll-name').value.trim() || '家长', '');
     await afterSignIn();
   } catch (error) { gateError(error); }
 };
