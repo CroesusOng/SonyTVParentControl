@@ -56,9 +56,17 @@ func main() {
 	}
 
 	server := api.New(st, authManager, web.Assets, cfg.Zone)
+
+	var handler http.Handler = server.Handler()
+	if cfg.BehindProxy() {
+		// Inside the logging wrapper, so a redirect still shows up in the log — if the
+		// phone is bouncing, that is the first thing worth seeing.
+		handler = api.RequireHTTPS(cfg.Origins[0], handler)
+	}
+
 	httpServer := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           withLogging(server.Handler()),
+		Handler:           withLogging(handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

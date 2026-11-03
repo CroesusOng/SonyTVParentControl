@@ -80,15 +80,19 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /", s.staticHandler())
 }
 
-// staticHandler serves the parent app, with no-store on the HTML so a republished
-// build is picked up instead of being pinned by a stale cache on someone's phone.
+// staticHandler serves the parent app with no-store on the whole shell, so a
+// republished build is picked up instead of being pinned by a stale cache.
+//
+// no-store on every asset rather than only the HTML, because a CDN in front applies
+// its own default to .js and .css where the origin states nothing — Cloudflare uses
+// four hours. That would pin a stale app.js against an index.html that is always
+// fresh, and a build running half old and half new fails in ways nobody can debug
+// from a phone. The shell is about 40 KB and the service worker keeps its own copy
+// for offline use, so no other cache has anything to add.
 func (s *Server) staticHandler() http.Handler {
 	files := http.FileServer(http.FS(s.assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || strings.HasSuffix(r.URL.Path, ".html") ||
-			strings.HasSuffix(r.URL.Path, "sw.js") {
-			w.Header().Set("Cache-Control", "no-store")
-		}
+		w.Header().Set("Cache-Control", "no-store")
 		// Go's mime table has no entry for .webmanifest, so it would go out as
 		// text/plain. ServeContent keeps a Content-Type that is already set, and the
 		// manifest is what makes "Add to Home Screen" behave like an app rather than
@@ -101,6 +105,33 @@ func (s *Server) staticHandler() http.Handler {
 }
 
 // ---------- middleware ----------
+
+// RequireHTTPS sends a browser that arrived over plain HTTP to the canonical https
+// origin.
+//
+// A tunnel will happily serve this app over http:// as well, and that failure mode is
+// nasty rather than obvious: WebAuthn needs a secure context, so the Face ID button
+// silently does nothing, and the session cookie is marked Secure, so even a sign-in
+// that somehow succeeded would be dropped on the very next request. Safari sticking on
+// an http:// URL it once reached successfully is all it takes.
+//
+// The test is deliberately strict — only an X-Forwarded-Proto of exactly "http"
+// redirects. The televisions reach this process directly on the LAN, with no proxy and
+// therefore no such header; bouncing them to a public https URL would break enforcement
+// at the moment the broadband went down, which is the one time it matters most.
+func RequireHTTPS(canonicalOrigin string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A chain of proxies appends, so the scheme the browser used is the first entry.
+		forwarded, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
+		if !strings.EqualFold(strings.TrimSpace(forwarded), "http") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// 308 rather than 302: it preserves the method and body, so a policy PUT that
+		// happened to go out over http is replayed rather than quietly becoming a GET.
+		http.Redirect(w, r, canonicalOrigin+r.URL.RequestURI(), http.StatusPermanentRedirect)
+	})
+}
 
 func (s *Server) device(
 	next func(http.ResponseWriter, *http.Request, store.Device),

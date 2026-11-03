@@ -410,3 +410,93 @@ func TestStartOfWeekIsMonday(t *testing.T) {
 		t.Errorf("startOfWeek(Mon) = %v, want the same day", got)
 	}
 }
+
+// ---------- proxy / secure context ----------
+
+func newRedirectingServer(t *testing.T) (*httptest.Server, *http.Client) {
+	t.Helper()
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot) // unmistakably "the redirect did not fire"
+	})
+	server := httptest.NewServer(RequireHTTPS("https://tv.example.com", inner))
+	t.Cleanup(server.Close)
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return server, client
+}
+
+func forwarded(t *testing.T, client *http.Client, url, proto, path string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, url+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proto != "" {
+		request.Header.Set("X-Forwarded-Proto", proto)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = response.Body.Close() })
+	return response
+}
+
+func TestPlainHTTPIsRedirectedToTheCanonicalOrigin(t *testing.T) {
+	server, client := newRedirectingServer(t)
+	response := forwarded(t, client, server.URL, "http", "/api/parent/bootstrap?x=1")
+
+	if response.StatusCode != http.StatusPermanentRedirect {
+		t.Fatalf("status = %d, want 308", response.StatusCode)
+	}
+	// The path and query have to survive, or a deep link lands on the home screen.
+	if got := response.Header.Get("Location"); got != "https://tv.example.com/api/parent/bootstrap?x=1" {
+		t.Fatalf("Location = %q", got)
+	}
+}
+
+// The televisions talk to this process directly on the LAN, with no proxy and so no
+// X-Forwarded-Proto. Redirecting them to the public https origin would break
+// enforcement exactly when the broadband is down.
+func TestDirectLANRequestsAreNotRedirected(t *testing.T) {
+	server, client := newRedirectingServer(t)
+	for _, proto := range []string{"", "https", "HTTPS", "https,http"} {
+		response := forwarded(t, client, server.URL, proto, "/api/device/sync")
+		if response.StatusCode != http.StatusTeapot {
+			t.Errorf("X-Forwarded-Proto %q: status = %d, want the request to pass through",
+				proto, response.StatusCode)
+		}
+	}
+}
+
+func TestRedirectLooksAtTheBrowsersSchemeNotTheLastProxys(t *testing.T) {
+	server, client := newRedirectingServer(t)
+	// Two proxies deep: the browser spoke http, the hop in between spoke https.
+	response := forwarded(t, client, server.URL, "http, https", "/")
+	if response.StatusCode != http.StatusPermanentRedirect {
+		t.Fatalf("status = %d, want 308", response.StatusCode)
+	}
+}
+
+// A CDN in front fills in its own Cache-Control where the origin says nothing, which
+// would let a stale app.js outlive an index.html that is always fresh.
+func TestShellAssetsAreNotCacheable(t *testing.T) {
+	server, _ := newTestServer(t)
+	for _, path := range []string{"/", "/app.js", "/styles.css", "/sw.js", "/manifest.webmanifest", "/icon.svg"} {
+		response, err := http.Get(server.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Errorf("%s: status = %d", path, response.StatusCode)
+			continue
+		}
+		if got := response.Header.Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", path, got)
+		}
+	}
+}
