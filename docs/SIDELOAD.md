@@ -1,0 +1,94 @@
+# 把 app 推到索尼电视上
+
+电视和 Mac 要在同一个网段。全程不需要 root,也不需要恢复出厂。
+
+## 1. 在电视上打开开发者选项和 adb
+
+1. **设置 → 系统 → 关于 → 版本号**(老机型是 **设置 → 设备偏好设置 → 关于 → 内部版本号**)
+2. 连续按 **7 次** OK,出现「您现在已是开发者」
+3. 回到 **设置 → 系统 → 开发者选项**,打开:
+   - **USB 调试**
+   - **网络调试**(有些 BRAVIA 叫 *ADB debugging* 或 *无线调试*)
+4. 记下电视的 IP:**设置 → 网络和互联网 → 点当前网络**
+
+> 2019 年以后的 BRAVIA 还有一个单独的 **设置 → 网络 → 家庭网络设置 → IP 控制 → 认证**,
+> 如果 `adb connect` 一直超时,把这里设成「普通和预共享密钥」再试。
+
+## 2. 连上
+
+```bash
+source scripts/env.sh
+adb connect 192.168.1.50:5555
+```
+
+第一次连接时**电视上会弹一个授权对话框** —— 用遥控器勾上「一直允许」再确定。
+弹窗很容易被忽略,`adb connect` 显示 `connected` 但 `adb devices` 显示 `unauthorized`
+就是卡在这一步。
+
+```bash
+adb devices -l
+# 192.168.1.50:5555   device   model:BRAVIA_...
+```
+
+## 3. 装包
+
+```bash
+./gradlew assembleDebug
+adb -s 192.168.1.50:5555 install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+装完在电视首页的「应用」一行里会出现一个蓝色盾牌图标。
+
+更新的时候同一条 `install -r` 就行。签名变了会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`,
+那就先 `adb uninstall dev.homelab.braviaguard.debug`。
+
+## 4. 开两个权限
+
+这两个都是 **special access** 权限,装包时弹不出来,只能手动进设置开。
+
+**无障碍(必须,不开就完全不生效)**
+
+- **设置 → 设备偏好设置 → 无障碍 → 电视守护 → 打开**
+- 系统会警告「可以监控您的操作」。确实如此 —— 它就是靠这个知道前台是哪个 app。
+  app 本身只读包名,不读任何内容,数据也不出家庭网络。
+
+**使用情况访问(可选,只影响报表)**
+
+- **设置 → 设备偏好设置 → 安全和限制 → 具有使用权限的应用 → 电视守护 → 打开**
+- 不开也能拦截,只是报表只能统计从开启执行之后的时间。
+
+app 首页会直接显示这两个开没开,旁边有按钮能跳过去。
+
+## 5. 配对
+
+1. 手机上打开家长端(见 [TLS.md](TLS.md) 把 HTTPS 配好),Face ID 登录
+2. 「电视」→「+ 添加一台电视」→ 记下 6 位配对码
+3. 电视上打开「电视守护」:
+   - 如果 Pi 上的 avahi 配好了,地址会**自动出现在列表里**,按 OK 选中
+   - 否则手输,比如 `pi5.local:8443`
+4. 输配对码(数字用上下键改,左右键换位),按「配对」
+
+配对成功后电视会显示状态面板。规则在手机上改,电视这边只能看。
+
+## 6. 日志排查
+
+```bash
+adb logcat -s GuardService:* Enforcement:* SecretStore:* BackendDiscovery:*
+```
+
+关键几行:
+
+| 看到 | 意思 |
+|---|---|
+| `enforcement service connected` | 无障碍服务起来了 |
+| `backend unreachable: ...` | 连不上 Pi,会按缓存规则继续执行 |
+| `enforcement service unbound` | 无障碍被关掉了 |
+
+## 7. 收尾
+
+```bash
+adb disconnect 192.168.1.50:5555
+```
+
+调试完建议把电视的**网络调试关掉** —— 开着的 adb 端口在局域网里是个无认证的 shell,
+而且小孩如果知道的话,`adb uninstall` 就能把这个 app 卸了。

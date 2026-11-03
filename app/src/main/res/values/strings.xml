@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BraviaGuard</string>
+
+    <string name="accessibility_service_label">BraviaGuard enforcement</string>
+    <string name="accessibility_service_summary">Applies the screen time rules set from the parent app</string>
+    <string name="accessibility_service_description">BraviaGuard needs this to see which app is in front of the screen. It uses that to count screen time and to show the blocked message when a rule applies. It does not read the contents of any app, and nothing leaves your home network.</string>
+
+    <!-- The blocked overlay -->
+    <string name="block_title">Not available right now</string>
+    <string name="block_reason_not_allowed">%1$s is not on the allowed list</string>
+    <string name="block_reason_blocked">%1$s has been switched off by a parent</string>
+    <string name="block_reason_curfew">%1$s is on</string>
+    <string name="block_reason_curfew_unnamed">Screen time is paused for now</string>
+    <string name="block_reason_app_budget">%1$s has used all %2$d min it gets today</string>
+    <string name="block_reason_daily_budget">Today\'s %1$d min of screen time is used up</string>
+    <string name="block_reason_weekly_budget">This week\'s %1$d min of screen time is used up</string>
+    <string name="block_retry_at">Available again at %1$s</string>
+    <string name="block_ask_parent">Ask a parent to unlock it from their phone</string>
+    <string name="block_offline_hint">The parent app cannot be reached — use an unlock code instead</string>
+    <string name="block_code_label">Unlock code</string>
+    <string name="block_code_help">Up and down change a digit, left and right move, OK confirms</string>
+    <string name="block_code_wrong">That code is not right</string>
+    <string name="block_code_used">That code has already been used</string>
+    <string name="block_code_unavailable">This TV is not paired yet, so codes cannot be checked</string>
+    <string name="block_code_ok">Unlocked · %1$d min</string>
+    <string name="block_dismiss_hint">Press BACK to go to the home screen</string>
+
+    <!-- Dashboard -->
+    <string name="dash_title">BraviaGuard</string>
+    <string name="dash_enforcing_on">Rules are being applied</string>
+    <string name="dash_enforcing_off">Rules are paused</string>
+    <string name="dash_paired_with">Paired with %1$s</string>
+    <string name="dash_last_sync">Last check %1$s ago</string>
+    <string name="dash_never_synced">Has not reached the parent app yet</string>
+    <string name="dash_offline_since">Parent app unreachable for %1$s</string>
+    <string name="dash_policy_version">Rules version %1$d</string>
+    <string name="dash_today">Today</string>
+    <string name="dash_week">This week</string>
+    <string name="dash_remaining">%1$s left</string>
+    <string name="dash_no_limit">No limit set</string>
+    <string name="dash_top_apps">Most used today</string>
+    <string name="dash_no_usage">Nothing watched yet today</string>
+    <string name="dash_blocked_now">Blocked right now: %1$s</string>
+    <string name="dash_grant_until">Temporarily unlocked until %1$s</string>
+    <string name="dash_curfews">Time windows: %1$d</string>
+    <string name="dash_sync_now">Check now</string>
+    <string name="dash_syncing">Checking…</string>
+    <string name="dash_unpair">Unpair this TV</string>
+    <string name="dash_unpair_prompt">Enter an unlock code from the parent app to unpair</string>
+    <string name="dash_unpair_failed">That code is not right</string>
+    <string name="dash_settings_note">Rules are changed from the parent app on your phone, not here.</string>
+
+    <!-- Permission prompts -->
+    <string name="warn_accessibility_title">Enforcement is switched off</string>
+    <string name="warn_accessibility_body">Rules cannot be applied until BraviaGuard is enabled under Accessibility.</string>
+    <string name="warn_accessibility_action">Open accessibility settings</string>
+    <string name="warn_usage_title">Usage access not granted</string>
+    <string name="warn_usage_body">Optional. Without it, reports only cover time since enforcement was switched on.</string>
+    <string name="warn_usage_action">Open usage access settings</string>
+
+    <!-- Pairing -->
+    <string name="pair_title">Pair with the parent app</string>
+    <string name="pair_body">Open the parent app on your phone, choose Add TV, and enter the code it shows.</string>
+    <string name="pair_discovering">Looking for it on this network…</string>
+    <string name="pair_found">Found on this network</string>
+    <string name="pair_manual_label">Address</string>
+    <string name="pair_manual_hint">pi5.local:8443</string>
+    <string name="pair_code_label">Pairing code</string>
+    <string name="pair_submit">Pair</string>
+    <string name="pair_working">Pairing…</string>
+    <string name="pair_failed">Could not pair: %1$s</string>
+    <string name="pair_need_code">Enter the address and the pairing code</string>
+</resources>

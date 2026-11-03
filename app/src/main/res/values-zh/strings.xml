@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">电视守护</string>
+
+    <string name="accessibility_service_label">电视守护 · 规则执行</string>
+    <string name="accessibility_service_summary">按手机上设定的规则管理电视使用时间</string>
+    <string name="accessibility_service_description">电视守护需要这个权限来识别当前在前台的是哪个 app,用于统计观看时长和在命中规则时显示提示。它不会读取任何 app 的内容,所有数据都不出家庭网络。</string>
+
+    <!-- 拦截遮罩 -->
+    <string name="block_title">现在不能看</string>
+    <string name="block_reason_not_allowed">%1$s 不在允许的名单里</string>
+    <string name="block_reason_blocked">%1$s 已被家长关闭</string>
+    <string name="block_reason_curfew">现在是「%1$s」</string>
+    <string name="block_reason_curfew_unnamed">现在是暂停时段</string>
+    <string name="block_reason_app_budget">%1$s 今天的 %2$d 分钟已经用完了</string>
+    <string name="block_reason_daily_budget">今天的 %1$d 分钟已经用完了</string>
+    <string name="block_reason_weekly_budget">这周的 %1$d 分钟已经用完了</string>
+    <string name="block_retry_at">%1$s 之后可以继续</string>
+    <string name="block_ask_parent">让家长在手机上解锁</string>
+    <string name="block_offline_hint">连不上家长端 —— 请输入解锁码</string>
+    <string name="block_code_label">解锁码</string>
+    <string name="block_code_help">上下改数字,左右换位置,按 OK 确认</string>
+    <string name="block_code_wrong">解锁码不对</string>
+    <string name="block_code_used">这个解锁码已经用过了</string>
+    <string name="block_code_unavailable">这台电视还没配对,无法校验解锁码</string>
+    <string name="block_code_ok">已解锁 %1$d 分钟</string>
+    <string name="block_dismiss_hint">按返回键回到主界面</string>
+
+    <!-- 状态面板 -->
+    <string name="dash_title">电视守护</string>
+    <string name="dash_enforcing_on">规则正在生效</string>
+    <string name="dash_enforcing_off">规则已暂停</string>
+    <string name="dash_paired_with">已配对 %1$s</string>
+    <string name="dash_last_sync">%1$s前同步过</string>
+    <string name="dash_never_synced">还没连上家长端</string>
+    <string name="dash_offline_since">已有 %1$s 连不上家长端</string>
+    <string name="dash_policy_version">规则版本 %1$d</string>
+    <string name="dash_today">今天</string>
+    <string name="dash_week">本周</string>
+    <string name="dash_remaining">还剩 %1$s</string>
+    <string name="dash_no_limit">没有设限额</string>
+    <string name="dash_top_apps">今天看得最多</string>
+    <string name="dash_no_usage">今天还没看过</string>
+    <string name="dash_blocked_now">正在拦截:%1$s</string>
+    <string name="dash_grant_until">已临时解锁至 %1$s</string>
+    <string name="dash_curfews">设了 %1$d 个时段</string>
+    <string name="dash_sync_now">立即同步</string>
+    <string name="dash_syncing">同步中…</string>
+    <string name="dash_unpair">解除配对</string>
+    <string name="dash_unpair_prompt">输入家长端的解锁码才能解除配对</string>
+    <string name="dash_unpair_failed">解锁码不对</string>
+    <string name="dash_settings_note">规则在手机上的家长端修改,这里只能看。</string>
+
+    <!-- 权限提示 -->
+    <string name="warn_accessibility_title">规则执行已关闭</string>
+    <string name="warn_accessibility_body">需要在「无障碍」里打开电视守护,规则才会生效。</string>
+    <string name="warn_accessibility_action">打开无障碍设置</string>
+    <string name="warn_usage_title">没有使用情况访问权限</string>
+    <string name="warn_usage_body">可选。不给的话,报表只能统计到开启执行之后的时间。</string>
+    <string name="warn_usage_action">打开使用情况访问设置</string>
+
+    <!-- 配对 -->
+    <string name="pair_title">和家长端配对</string>
+    <string name="pair_body">在手机上打开家长端,选「添加电视」,把它显示的配对码输进来。</string>
+    <string name="pair_discovering">正在本地网络里找…</string>
+    <string name="pair_found">在本地网络里找到了</string>
+    <string name="pair_manual_label">地址</string>
+    <string name="pair_manual_hint">pi5.local:8443</string>
+    <string name="pair_code_label">配对码</string>
+    <string name="pair_submit">配对</string>
+    <string name="pair_working">配对中…</string>
+    <string name="pair_failed">配对失败:%1$s</string>
+    <string name="pair_need_code">地址和配对码都要填</string>
+</resources>

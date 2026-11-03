@@ -1,0 +1,29 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.keystore
+!debug.keystore
+captures/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.kotlin/
+
+# Go
+server/braviaguardd
+server/braviaguardd-*
+server/dist/
+
+# Runtime data (never commit a family's actual policy or usage)
+server/data/
+*.pem
+*.key
+!web/**/*.key
+
+# macOS
+.DS_Store

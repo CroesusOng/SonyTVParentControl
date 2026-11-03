@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Release builds: HTTPS only, trusting both the system store (for a Let's Encrypt cert on
+  the Pi) and the user store (for a private CA the parent installed on the TV under
+  Settings > Device Preferences > Security & restrictions > Credentials).
+  The debug flavour relaxes this to allow plain HTTP while bringing the Pi up.
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- Needed for the private-CA option in docs/TLS.md; the alternative is
+                 asking the family to buy a domain. -->
+            <certificates src="user" tools:ignore="AcceptsUserCertificates" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f13">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="电视守护">
+<meta name="description" content="家里电视的屏幕时间管理">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="styles.css">
+<title>电视守护</title>
+</head>
+<body>
+
+<!-- 未登录 / 首次设置 -->
+<section id="gate" class="screen" hidden>
+  <div class="hero">
+    <img src="icon.svg" alt="" class="hero-icon">
+    <h1>电视守护</h1>
+    <p class="muted" id="gate-sub">用 Face ID 登录</p>
+  </div>
+
+  <div id="gate-setup" hidden>
+    <label class="field">
+      <span>你的名字</span>
+      <input id="setup-name" type="text" autocomplete="name" placeholder="妈妈 / 爸爸" enterkeyhint="next">
+    </label>
+    <label class="field">
+      <span>设置码（服务端启动时打印在日志里）</span>
+      <input id="setup-code" type="text" inputmode="numeric" autocomplete="off" placeholder="8 位数字" enterkeyhint="done">
+    </label>
+    <button id="btn-register" class="primary big">用 Face ID 注册</button>
+    <p class="muted small">注册后这台手机就是家长端。之后可以在「家长」里给另一台手机也加一个。</p>
+  </div>
+
+  <div id="gate-login" hidden>
+    <button id="btn-login" class="primary big">Face ID 登录</button>
+    <button id="btn-register-more" class="ghost">这台手机还没注册过</button>
+  </div>
+
+  <p id="gate-error" class="error" hidden></p>
+</section>
+
+<!-- 主界面 -->
+<section id="main" class="screen" hidden>
+
+  <header class="topbar">
+    <div>
+      <h1>电视守护</h1>
+      <p class="muted small" id="conn-state">—</p>
+    </div>
+    <label class="switch" title="总开关">
+      <input id="enforce-toggle" type="checkbox">
+      <span class="slider"></span>
+    </label>
+  </header>
+
+  <!-- 随时解锁:最常用,放最上面 -->
+  <div class="card accent">
+    <h2>临时解锁</h2>
+    <p class="muted small">现在就放行,到时间自动恢复规则。</p>
+    <div class="row gap">
+      <button class="unlock" data-minutes="15">15 分钟</button>
+      <button class="unlock" data-minutes="30">30 分钟</button>
+      <button class="unlock" data-minutes="60">60 分钟</button>
+      <button class="unlock" data-minutes="120">2 小时</button>
+    </div>
+    <div id="grants"></div>
+  </div>
+
+  <!-- 刚刚被拦截的 -->
+  <div class="card" id="blocks-card" hidden>
+    <h2>刚刚被拦截</h2>
+    <div id="blocks"></div>
+  </div>
+
+  <!-- 用量 -->
+  <div class="card">
+    <h2>使用情况</h2>
+    <div class="stats">
+      <div><b id="today-total">—</b><span class="muted small">今天</span></div>
+      <div><b id="week-total">—</b><span class="muted small">本周</span></div>
+    </div>
+    <div id="top-apps" class="bars"></div>
+    <div id="daily-chart" class="sparkline"></div>
+  </div>
+
+  <!-- 规则 -->
+  <details class="card">
+    <summary><h2>规则</h2></summary>
+
+    <h3>名单模式</h3>
+    <div class="segmented" id="list-mode">
+      <button data-mode="OFF">不限名单</button>
+      <button data-mode="ALLOWLIST">只允许白名单</button>
+      <button data-mode="BLOCKLIST">黑名单禁用</button>
+    </div>
+    <div id="app-list" class="applist"></div>
+
+    <h3>每日限额</h3>
+    <div id="daily-limits" class="daylimits"></div>
+
+    <h3>每周限额</h3>
+    <label class="field inline">
+      <input id="weekly-minutes" type="number" min="0" step="30" inputmode="numeric" placeholder="不限">
+      <span>分钟 / 周</span>
+    </label>
+
+    <h3>单个 app 限额</h3>
+    <div id="per-app-limits" class="applist"></div>
+
+    <h3>禁用时段</h3>
+    <div id="curfews"></div>
+    <button id="btn-add-curfew" class="ghost">+ 加一个时段</button>
+
+    <h3>连不上这台 Pi 的时候</h3>
+    <div class="segmented" id="offline-mode">
+      <button data-mode="KEEP_ENFORCING">继续执行规则</button>
+      <button data-mode="OPEN_AFTER_GRACE">一段时间后放行</button>
+    </div>
+    <label class="field inline" id="grace-field" hidden>
+      <input id="grace-minutes" type="number" min="1" step="10" inputmode="numeric">
+      <span>分钟后放行</span>
+    </label>
+
+    <button id="btn-save-policy" class="primary big">保存规则</button>
+    <p class="muted small">保存要过一次 Face ID。电视最多 30 秒内生效。</p>
+  </details>
+
+  <!-- 离线应急码 -->
+  <div class="card">
+    <h2>离线应急码</h2>
+    <p class="muted small">Pi 连不上的时候,用遥控器把这个码输进电视就能解锁 30 分钟。</p>
+    <div id="code-panel">
+      <button id="btn-show-code" class="primary">用 Face ID 显示应急码</button>
+    </div>
+  </div>
+
+  <!-- 电视 -->
+  <details class="card">
+    <summary><h2>电视</h2></summary>
+    <div id="devices"></div>
+    <button id="btn-pair" class="ghost">+ 添加一台电视</button>
+    <div id="pairing-code" hidden></div>
+  </details>
+
+  <footer>
+    <button id="btn-logout" class="ghost small">退出登录</button>
+  </footer>
+</section>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

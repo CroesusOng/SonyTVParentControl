@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      No AppCompat anywhere in this app, so we inherit from the platform theme.
+      The window background is set dark so there is no white flash before Compose draws —
+      very visible on a large TV panel.
+    -->
+    <style name="Theme.BraviaGuard" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

@@ -1,0 +1,19 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  Install to /etc/avahi/services/braviaguard.service on the Pi, then
+  `sudo systemctl reload avahi-daemon`.
+
+  This is what lets the TV app find the Pi by itself instead of making someone spell out
+  a URL with a D-pad. The Go binary publishes nothing: a Raspberry Pi already runs
+  avahi-daemon, so reusing it keeps an mDNS library out of the server. Keep <port> in
+  step with BG_LISTEN.
+-->
+<service-group>
+  <name replace-wildcards="yes">BraviaGuard on %h</name>
+  <service>
+    <type>_braviaguard._tcp</type>
+    <port>8443</port>
+    <txt-record>scheme=https</txt-record>
+  </service>
+</service-group>

@@ -1,0 +1,44 @@
+# Plain systemd unit, for running the binary directly instead of in a container.
+# Install to /etc/systemd/system/braviaguard.service
+#
+#   sudo useradd --system --home /var/lib/braviaguard --shell /usr/sbin/nologin braviaguard
+#   sudo install -o braviaguard -g braviaguard -d /var/lib/braviaguard
+#   sudo install -m755 braviaguardd /usr/local/bin/braviaguardd
+#   sudo systemctl enable --now braviaguard
+
+[Unit]
+Description=BraviaGuard parental control backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=braviaguard
+Group=braviaguard
+ExecStart=/usr/local/bin/braviaguardd
+Restart=always
+RestartSec=5
+
+Environment=BG_DATA_DIR=/var/lib/braviaguard
+Environment=BG_LISTEN=:8443
+Environment=BG_ORIGINS=https://tv.example.com:8443
+Environment=BG_TLS_CERT=/etc/braviaguard/certs/fullchain.pem
+Environment=BG_TLS_KEY=/etc/braviaguard/certs/privkey.pem
+Environment=BG_TZ=Asia/Shanghai
+
+# It reads certificates and writes one directory. Nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/braviaguard
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,47 @@
+# Podman Quadlet unit. Install to one of:
+#   rootless:  ~/.config/containers/systemd/braviaguard.container
+#   rootful:   /etc/containers/systemd/braviaguard.container
+# then:  systemctl --user daemon-reload && systemctl --user start braviaguard
+#
+# Edit BG_ORIGINS before first start: WebAuthn binds every passkey to one exact origin,
+# and changing it later invalidates the passkeys already registered.
+
+[Unit]
+Description=BraviaGuard parental control backend
+Documentation=file:///opt/bravia-parental-control/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/braviaguard:latest
+ContainerName=braviaguard
+AutoUpdate=local
+
+# Host networking, deliberately. The televisions reach the Pi by its LAN address, and the
+# host's avahi-daemon advertises the service on the same port — a bridged network would
+# mean the advertised port and the reachable port could drift apart.
+Network=host
+
+Volume=braviaguard-data:/var/lib/braviaguard:Z
+# Where certbot/lego leaves the certificate. Read-only: the server only ever reads it.
+Volume=/etc/braviaguard/certs:/certs:ro,Z
+
+Environment=BG_DATA_DIR=/var/lib/braviaguard
+Environment=BG_LISTEN=:8443
+Environment=BG_ORIGINS=https://tv.example.com:8443
+Environment=BG_TLS_CERT=/certs/fullchain.pem
+Environment=BG_TLS_KEY=/certs/privkey.pem
+Environment=BG_TZ=Asia/Shanghai
+
+User=10001:10001
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=ALL
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=60
+
+[Install]
+WantedBy=default.target
