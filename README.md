@@ -130,26 +130,48 @@ cd server && go test ./... && go vet ./...
 # 脚本会把二进制和 systemd/avahi 的 unit 拷过去,并打印 Pi 上要执行的命令
 ```
 
-**选项 B:podman + Quadlet**(符合你现有的 podman 用法)
+**选项 B:rootless podman-compose**(podman 4.3 也能用)
 
 ```bash
 # Pi 上
-cd bravia-parental-control/server
-podman build -t braviaguard:latest -f Containerfile .
+git clone https://github.com/CroesusOng/SonyTVParentControl.git ~/braviaguard
+cd ~/braviaguard/server
+cp .env.example .env && $EDITOR .env       # 至少改 BG_ORIGINS 和 BG_TZ
+mkdir -p data
 
-mkdir -p ~/.config/containers/systemd
-cp deploy/braviaguard.container ~/.config/containers/systemd/
-$EDITOR ~/.config/containers/systemd/braviaguard.container   # 改 BG_ORIGINS / BG_TZ
+podman-compose build
+podman-compose up -d
+podman logs braviaguard | tail -20         # 从这里读 SETUP CODE
+```
 
-podman volume create braviaguard-data
-podman unshare chown -R 10001:10001 \
-  "$(podman volume inspect braviaguard-data -f '{{.Mountpoint}}')"
+挂到 systemd 上(开机自启):
 
+```bash
+install -Dm644 /dev/stdin ~/.config/systemd/user/braviaguard.service <<'EOF'
+[Unit]
+Description=BraviaGuard podman-compose stack
+Requires=podman.socket
+After=podman.socket network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/braviaguard/server
+ExecStart=/usr/bin/podman-compose up -d
+ExecStop=/usr/bin/podman-compose down
+
+[Install]
+WantedBy=default.target
+EOF
 systemctl --user daemon-reload
-systemctl --user start braviaguard
-journalctl --user -u braviaguard -n 40     # 从这里读 SETUP CODE
+systemctl --user enable --now braviaguard
 loginctl enable-linger "$USER"             # 没登录时也保持运行
 ```
+
+**选项 C:podman Quadlet**(需要 podman ≥ 4.4)
+
+`deploy/braviaguard.container` 是现成的,拷到 `~/.config/containers/systemd/`
+再 `systemctl --user daemon-reload` 即可。podman 4.3 不支持 Quadlet,用选项 B。
 
 然后让电视能自动发现它:
 
