@@ -5,6 +5,11 @@
 
 **标注:** 🧑 你做(需要遥控器 / sudo / DNS / iPhone) · 🤖 我做(给我 ssh 就行)
 
+**现在到哪了:** 阶段 0 ✅ · 阶段 2 ✅ · 阶段 3 ✅ ——
+后端在 Pi 上跑着、域名通了、电视端的测试入口也加好了。
+**下一步是阶段 1**:把 APK 装到电视上,按那个按钮,看遮罩和遥控器行不行。
+这是整个项目的 go / no-go 点,也是唯一还完全没验过的一层。
+
 ---
 
 ## 先说两件不可逆的事
@@ -24,22 +29,30 @@ WebAuthn 把每个凭据绑死在一个 origin 上。换域名、换端口、从
 
 ---
 
-## 阶段 0 — 让电视端能单独验证 🤖 ~20 分钟
+## 阶段 0 — 让电视端能单独验证 ✅ 已完成
 
-**为什么先做这个:** 整个项目风险最高的两处(accessibility 事件的准确度、
-overlay 能不能抢到 D-pad 焦点)都在拦截层,而它们**不需要后端也能验**。
-先加一个 debug 版才有的「测试拦截遮罩」按钮,你就能在不碰 DNS、证书、Pi 的前提下
-确认这条路走不走得通。
+**为什么要有这个:** 整个项目风险最高的两处(accessibility overlay 能不能真的盖住
+正在播放的视频、能不能抢到 D-pad 焦点)都在拦截层,而它们**不需要后端也能验**。
+没有这个按钮,第一次知道答案就得等到阶段 4 —— 后端、域名、配对全做完之后。
 
-- `EnforcementController` 加一个 `previewBlockOverlay()`,拿假数据直接调 `overlay.show()`,
-  不触发 `GLOBAL_ACTION_HOME`(否则测试时会被踢出 app)
-- 面板上加一个 `if (BuildConfig.DEBUG)` 的按钮
+落地的东西:
 
-约 20 行。**要不要做由你定** —— 不做也能往下走,只是风险会一直背到阶段 4。
+- `EnforcementController.previewBlockOverlay()` 拿假数据直接调 `overlay.show()`。
+  **不触发 `GLOBAL_ACTION_HOME`**(否则一按按钮就被踢回主屏,看不到结果),
+  **不上报给 Pi**(否则家长端的拦截历史里会多一条假记录)。
+  返回 `false` 表示无障碍服务没开 —— 这是「按了没反应」最常见的原因,
+  而从这个界面上本来是看不出来的。
+- 面板上一个 `if (BuildConfig.DEBUG)` 的「测试拦截遮罩」按钮,
+  **配对页和已配对面板上都有**。配对页上的那个才是关键:阶段 1 的时候电视还没配对,
+  看到的就是配对页。
+- 一个 `previewing` 标志,防止轮询循环三秒后把遮罩自己收掉
+  (没有真的拦截 → 下一次判定是 Allow → Allow 会 hide)。真的拦截发生时会接管。
+
+release 版里 R8 会把 `BuildConfig.DEBUG` 折成 false,整个分支都被丢掉。
 
 ---
 
-## 阶段 1 — 电视上装包并验证拦截层 🧑 ~20 分钟
+## 阶段 1 — 电视上装包并验证拦截层 🧑 ~20 分钟 ← **下一步**
 
 照 [SIDELOAD.md](SIDELOAD.md) 走。概括:
 
@@ -48,13 +61,20 @@ overlay 能不能抢到 D-pad 焦点)都在拦截层,而它们**不需要后端�
       —— **电视上会弹授权框,用遥控器勾「一直允许」**(最容易卡在这)
 - [ ] `./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk`
 - [ ] 电视:设置 → 设备偏好设置 → 无障碍 → 电视守护 → 打开
-- [ ] 打开 app,按「测试拦截遮罩」(如果做了阶段 0)
+- [ ] 打开 app(还没配对,看到的是配对页),按**调试工具 → 测试拦截遮罩**
 
 **成功标准:**
 - 遮罩全屏出现,盖住了下面的内容
 - 遥控器上下键能改数字,左右键能换位置
-- 按 OK 有反馈(未配对时会显示「还没配对,无法校验解锁码」—— 这是对的)
+- 按 OK 有反馈(未配对时会显示「这台电视还没配对,无法校验解锁码」—— 这是对的)
 - 按返回键遮罩消失
+
+**更狠的一次验证(建议做):** 先打开 YouTube 或 Netflix 放一段视频,
+再按 HOME 回到电视守护按那个按钮 —— 真正要确认的是遮罩能盖住**正在播放的视频**,
+而不只是盖住一个静止的界面。
+
+按了完全没反应、并且下面出现红字「没反应:先去 设置 → …」,
+说明无障碍服务没打开,回上一步。
 
 **这是整个项目的 go / no-go 点。** 这步过了,后面都是配置工作。
 过不了的话,`app/src/main/kotlin/dev/homelab/braviaguard/enforce/BlockOverlay.kt`
@@ -64,7 +84,7 @@ overlay 能不能抢到 D-pad 焦点)都在拦截层,而它们**不需要后端�
 
 ---
 
-## 阶段 2 — 把域名接到 Cloudflare Tunnel 🧑 ~10 分钟
+## 阶段 2 — 把域名接到 Cloudflare Tunnel ✅ 已完成
 
 用隧道的话这一步比签证书简单得多:**不用证书、不用续期、不用端口转发、不用 A 记录**。
 细节和坑在 [TLS.md](TLS.md) 方案一。
@@ -91,30 +111,66 @@ overlay 能不能抢到 D-pad 焦点)都在拦截层,而它们**不需要后端�
 
 **成功标准:** 后端起来之后(阶段 3),手机上 `https://tv.你的域名` 能打开且没有证书警告。
 
+**实测通过的项(阶段 3 之后复验的):** HTTPS 200 / HTTP2、PWA 全部资源、
+manifest 的 Content-Type 是 `application/manifest+json`(装得成 app 而不是书签)、
+Service Worker 注册成功且整个 shell 已缓存、WebAuthn 的 `rp.id` 等于域名、
+`isSecureContext` 为 true、`isUserVerifyingPlatformAuthenticatorAvailable()` 为 true
+(Face ID 的前提条件)、hostname 上没有 Access 拦截。
+
+**两个只有上了 CDN 才会出现、已经修掉的坑:**
+
+1. **明文 `http://` 也能打开整个 app。** WebAuthn 要 secure context,
+   所以注册按钮会**一声不响地什么都不做**;而 session cookie 带 `Secure`,
+   就算登进去了下一个请求也会被浏览器丢掉。Safari 只要有一次落在 http:// 上拿到 200
+   就可能停在那。现在 `api.RequireHTTPS` 会把 `X-Forwarded-Proto: http` 308 跳到
+   规范 origin —— **只认这一个精确条件**,因为电视是直连内网没有这个头,
+   把电视弹到公网 https 上去会在宽带断掉时恰好废掉拦截。
+2. **Cloudflare 把 `app.js` / `styles.css` 缓存了 4 小时。** 源站原来只给 HTML 设了
+   `no-store`,剩下的 CDN 按自己默认填,结果是新的 `index.html` 配旧的 `app.js` ——
+   半新半旧的版本在手机上跑,从手机上根本没法 debug。现在整个 shell 都 `no-store`。
+
+顺手记一条:**隧道那个 `cloudflared` 可能不是 systemd 服务。** 如果
+`systemctl is-active cloudflared` 说 inactive、`~/.cloudflared` 是空的,
+不等于隧道没配 —— 先 `pgrep -af cloudflared` 看看,它可能是个 token 模式的容器。
+
 ---
 
-## 阶段 3 — 后端上 Pi 🤖 ~10 分钟
+## 阶段 3 — 后端上 Pi ✅ 已完成
 
-给我 ssh 地址(比如 `pi@pi5.local`)和你定的域名,我来做:
+实际落地的方式(和原计划有出入的地方都在这):
 
-- [ ] 交叉编译 linux/arm64(`scripts/build-server.sh`)
-- [ ] 按你的习惯选 **podman quadlet** 或**裸 systemd**(两份 unit 都写好了)
-- [ ] 写 `/etc/braviaguard/braviaguard.env`(从 `braviaguard.env.example` 复制)
-      —— 这个文件**不在 git 里**,家里特有的值都在这
-- [ ] 装 avahi service,这样电视能自动发现,不用遥控器拼 URL
-- [ ] 从日志里读出 **SETUP CODE** 给你
+- [x] **在 Pi 上直接构建**,没有交叉编译 —— 仓库 clone 到 `~/braviaguard`,
+      以后 `git pull` 就能更新
+- [x] **podman-compose,不是 Quadlet** —— 这台机器的 podman 是 4.3.1,
+      Quadlet 要 4.4+,所以 `deploy/braviaguard.container` 在这里根本用不了。
+      改成了这台机器其它 stack 在用的 `compose.yaml` + 用户 systemd unit 的模式
+- [x] `~/braviaguard/server/.env`(从 `braviaguard.env.example` 复制)——
+      **不在 git 里**,域名和时区在这
+- [x] avahi service,电视能自动发现。**`scheme` 必须是 `http`** ——
+      隧道方案下 Pi 本地跑的是明文 HTTP,写 `https` 电视会连不上,
+      而且失败得像「Pi 挂了」
+- [x] `systemctl --user enable` + `Linger=yes`,重启自动起来
 
-**成功标准:**
+**成功标准(都过了):**
 - Pi 上 `curl http://localhost:8443/healthz` 返回 `ok`
 - 启动日志里有 `serving plain HTTP behind a TLS terminator`(说明它认出了隧道)
 - iPhone Safari 打开 `https://tv.你的域名` 看到登录页,**地址栏没有证书警告**
 
+**做这一步时发现并修掉的一个会把你锁死的 bug:**
+`BeginRegistration` 必须在 Face ID 弹窗**之前**建好 parent 记录
+(WebAuthn 要 user handle 才能生成 challenge),而 `HasParents()` 原来只数记录条数。
+于是「点注册 → 把 Face ID 弹窗划掉」就会让 `needsSetup` 变成 false,
+setup code 从此不被接受,而又没有任何凭据能登录 —— 只能手改 `state.json`。
+划掉弹窗是个再正常不过的操作。现在「没有凭据的 parent 不算数」,重试时还会把残留清掉。
+
 ---
 
-## 阶段 4 — 注册 passkey,配对电视 🧑 ~10 分钟
+## 阶段 4 — 注册 passkey,配对电视 🧑 ~10 分钟(阶段 1 过了就能做)
 
-- [ ] iPhone Safari 打开 `https://tv.yourdomain.com:8443`
+- [ ] iPhone Safari 打开 `https://tv.你的域名` —— **不带端口**,见阶段 2 第 1 条
 - [ ] 填名字 + SETUP CODE → **Face ID 注册**
+      —— setup code **只对当前这次进程有效**,重启会换一个,
+      要重新拿:`podman logs braviaguard | grep "SETUP CODE"`
 - [ ] **分享 → 添加到主屏幕**(这步别跳,否则每次都要在 Safari 里翻)
 - [ ] **妈妈的手机同样做一遍** —— 同一个网址 →「这台手机还没注册过」→
       先用你的 Face ID 授权,再给她注册一个 passkey
@@ -158,12 +214,12 @@ overlay 能不能抢到 D-pad 焦点)都在拦截层,而它们**不需要后端�
 
 | | 用在哪 | 状态 |
 |---|---|---|
-| 域名 | 阶段 2、3 —— 定了就不能改 | ✅ 已定 |
-| Pi 的 ssh 地址和用户 | 阶段 3 | ⬜ |
-| Pi 的内网 IP | 电视直连用 | ⬜ |
-| podman quadlet 还是裸 systemd | 阶段 3(两份 unit 都现成) | ⬜ |
-| 时区确认(默认 `Asia/Shanghai`) | 日/周边界按它算 | ⬜ |
-| 阶段 1 的结果 | 遮罩和 D-pad 到底行不行 | ⬜ |
+| 域名 | 阶段 2、3 —— 定了就不能改 | ✅ 已定并实测 |
+| Pi 的 ssh 地址和用户 | 阶段 3 | ✅ |
+| Pi 的内网 IP | 电视直连用 | ✅ 已记,avahi 也会广播 |
+| podman quadlet 还是裸 systemd | 阶段 3 | ✅ podman-compose(4.3.1 没有 Quadlet) |
+| 时区 | 日/周边界按它算 | ✅ 跟随 Pi 的系统时区 |
+| **阶段 1 的结果** | **遮罩和 D-pad 到底行不行** | ⬜ **还差这一个** |
 
 > 文档里一律用 `tv.example.com` 占位。真实域名不进 git —— 这个仓库在 GitHub 上,
 > 而家长端现在是公网可达的,没必要让「这个域名跑的是什么、有哪些接口」变得可搜索。

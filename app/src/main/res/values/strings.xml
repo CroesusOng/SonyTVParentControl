@@ -71,4 +71,11 @@
     <string name="pair_working">Pairing…</string>
     <string name="pair_failed">Could not pair: %1$s</string>
     <string name="pair_need_code">Enter the address and the pairing code</string>
+    <!-- Debug build only; the release build never reaches these. -->
+    <string name="debug_title">Debug tools</string>
+    <string name="debug_preview_note">Puts the block overlay on screen with invented numbers, so the overlay and the remote can be checked before any of the backend exists. It does not send you to the home screen and does not report anything to the Pi.</string>
+    <string name="debug_preview_overlay">Test the block overlay</string>
+    <string name="debug_preview_app">Example app (test)</string>
+    <string name="debug_preview_needs_service">Nothing happened: switch the service on first, under Settings → Device Preferences → Accessibility → BraviaGuard.</string>
+    <string name="debug_preview_shown">Up/down changes a digit, left/right moves between them, OK submits, Back closes. It also closes itself after 90 seconds.</string>
 </resources>

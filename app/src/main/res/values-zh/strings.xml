@@ -71,4 +71,11 @@
     <string name="pair_working">配对中…</string>
     <string name="pair_failed">配对失败:%1$s</string>
     <string name="pair_need_code">地址和配对码都要填</string>
+    <!-- 只有 debug 版会用到,release 版走不到这里。 -->
+    <string name="debug_title">调试工具</string>
+    <string name="debug_preview_note">用假数据把拦截遮罩弹出来,后端还没弄好就能先验遮罩和遥控器。不会把你踢回主屏,也不会上报给 Pi。</string>
+    <string name="debug_preview_overlay">测试拦截遮罩</string>
+    <string name="debug_preview_app">示例应用(测试)</string>
+    <string name="debug_preview_needs_service">没反应:先去 设置 → 设备偏好设置 → 无障碍 → 电视守护 把服务打开。</string>
+    <string name="debug_preview_shown">上下键改数字,左右键换位置,OK 提交,返回键关闭。放着不动 90 秒也会自己消失。</string>
 </resources>

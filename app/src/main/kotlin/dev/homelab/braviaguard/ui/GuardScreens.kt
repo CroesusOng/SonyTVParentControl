@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Button
 import androidx.tv.material3.Text
+import dev.homelab.braviaguard.BuildConfig
 import dev.homelab.braviaguard.GuardApp
 import dev.homelab.braviaguard.R
 import dev.homelab.braviaguard.enforce.GuardSnapshot
@@ -75,6 +76,8 @@ private fun DashboardScreen(app: GuardApp, snapshot: GuardSnapshot, resumeTick: 
         item { Header(snapshot) }
 
         item { PermissionWarnings(resumeTick) }
+
+        item { DebugTools(app) }
 
         item {
             Section(
@@ -231,6 +234,8 @@ private fun PairingScreen(app: GuardApp, resumeTick: Int) {
 
         item { PermissionWarnings(resumeTick) }
 
+        item { DebugTools(app) }
+
         item {
             Section(title = stringRes(R.string.pair_found)) {
                 if (discovered.isEmpty()) {
@@ -289,6 +294,43 @@ private fun PairingScreen(app: GuardApp, resumeTick: Int) {
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Debug build only, and gated here at the call site rather than in a debug source set:
+ * one short function next to the screen it appears on is easier to keep honest than a
+ * parallel copy of this file. R8 folds `BuildConfig.DEBUG` to false and drops the whole
+ * branch from the release build.
+ *
+ * It exists because the riskiest part of this app cannot be unit tested. Whether the
+ * accessibility overlay really covers a running video app, and whether it takes the
+ * D-pad away from that app, is a question only a real television answers — and without
+ * this button the first answer would arrive at the end of the rollout, after the
+ * backend, the domain and the pairing were all done.
+ */
+@Composable
+private fun DebugTools(app: GuardApp) {
+    if (!BuildConfig.DEBUG) return
+
+    val context = LocalContext.current
+    var shown by remember { mutableStateOf<Boolean?>(null) }
+
+    Section(title = stringRes(R.string.debug_title), accent = Warn) {
+        Body(stringRes(R.string.debug_preview_note), TextMuted, size = 17)
+        Button(onClick = { shown = app.enforcement.previewBlockOverlay() }) {
+            Text(stringRes(R.string.debug_preview_overlay), fontSize = 20.sp)
+        }
+        shown?.let {
+            Body(
+                text = context.getString(
+                    if (it) R.string.debug_preview_shown
+                    else R.string.debug_preview_needs_service,
+                ),
+                color = if (it) Ok else Danger,
+                size = 17,
+            )
         }
     }
 }

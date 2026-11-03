@@ -9,6 +9,7 @@ import android.util.Log
 import dev.homelab.braviaguard.R
 import dev.homelab.braviaguard.core.Base32
 import dev.homelab.braviaguard.core.BlockEventRequest
+import dev.homelab.braviaguard.core.BlockReason
 import dev.homelab.braviaguard.core.Decision
 import dev.homelab.braviaguard.core.EnrollRequest
 import dev.homelab.braviaguard.core.ForegroundSession
@@ -116,6 +117,13 @@ class EnforcementController(
     @Volatile private var usage: UsageStore = emptyMap()
     @Volatile private var usageLoaded = false
 
+    /**
+     * True while the debug-only preview overlay is up. The polling loop would otherwise
+     * take it down within three seconds: nothing is actually blocked, so the next
+     * evaluation returns Allow and Allow hides the overlay.
+     */
+    @Volatile private var previewing = false
+
     @Volatile private var currentPackage: String? = null
     @Volatile private var sessionStart: Instant? = null
     @Volatile private var blockedPackage: String? = null
@@ -148,7 +156,10 @@ class EnforcementController(
         this.service = service
         this.overlay = overlay
         overlay.onCodeSubmitted = { code -> submitEscapeCode(code) }
-        overlay.onDismissed = { blockedPackage = null }
+        overlay.onDismissed = {
+            blockedPackage = null
+            previewing = false
+        }
         startLoop()
     }
 
@@ -157,6 +168,7 @@ class EnforcementController(
         currentPackage?.let { pkg -> sessionStart?.let { start -> closeSession(pkg, start, now) } }
         currentPackage = null
         sessionStart = null
+        previewing = false
         overlay?.hide()
         overlay = null
         service = null
@@ -201,7 +213,7 @@ class EnforcementController(
                 // Only clear the overlay for the app it was raised about. Kicking a blocked
                 // app to the home screen makes the launcher the foreground app, and the
                 // launcher is always allowed — that must not dismiss the message.
-                if (blockedPackage == null || blockedPackage == packageName) {
+                if (!previewing && (blockedPackage == null || blockedPackage == packageName)) {
                     blockedPackage = null
                     overlay?.hide()
                 }
@@ -213,6 +225,8 @@ class EnforcementController(
     }
 
     private fun block(packageName: String, decision: Decision.Block, now: Instant) {
+        // A real verdict takes the screen back from a preview that was left up.
+        previewing = false
         blockedPackage = packageName
         val presentation = BlockMessages.present(
             context = context,
@@ -239,6 +253,48 @@ class EnforcementController(
         }
         val pkg = currentPackage ?: return
         if (blockedPackage == null) applyDecision(pkg, now)
+    }
+
+    // ---------- debug ----------
+
+    /**
+     * Puts the block overlay on screen with invented facts, for the debug build only.
+     *
+     * The two riskiest things in this app — whether the accessibility overlay really
+     * draws above a running video app, and whether it takes the D-pad — can only be
+     * answered on a real television, and waiting for a real block to find out means
+     * waiting until the backend, the domain and the pairing are all done. This answers
+     * both with nothing but `adb install`.
+     *
+     * Deliberately not a real block: no GLOBAL_ACTION_HOME, which would throw you out
+     * of this very screen the moment you pressed the button, and no block report to the
+     * Pi, which would put a fake entry in the parent app's history.
+     *
+     * Returns false when the accessibility service is not running, which is the usual
+     * reason nothing happens and is otherwise invisible from this screen.
+     */
+    fun previewBlockOverlay(): Boolean {
+        val target = overlay ?: return false
+        val now = Instant.now()
+        val presentation = BlockMessages.present(
+            context = context,
+            block = Decision.Block(
+                reason = BlockReason.DAILY_BUDGET_EXHAUSTED,
+                limitMinutes = PREVIEW_LIMIT_MINUTES,
+                usedSeconds = PREVIEW_LIMIT_MINUTES * 60L,
+                // Tomorrow's local midnight, the same instant a real daily budget resets,
+                // so the "try again at" line is formatted exactly as it would be for real.
+                retryAt = now.atZone(zone).toLocalDate().plusDays(1)
+                    .atStartOfDay(zone).toInstant(),
+            ),
+            appLabel = context.getString(R.string.debug_preview_app),
+            zone = zone,
+            now = now,
+            offline = unreachableSince() != null,
+        )
+        previewing = true
+        main.post { target.show(presentation) }
+        return true
     }
 
     // ---------- offline escape code ----------
@@ -498,6 +554,8 @@ class EnforcementController(
 
     private companion object {
         const val TAG = "Enforcement"
+        /** Arbitrary, but a plausible household number reads better than 1 or 999. */
+        const val PREVIEW_LIMIT_MINUTES = 120
         const val OFFLINE_GRANT_MINUTES = 30L
     }
 }
