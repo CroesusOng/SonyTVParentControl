@@ -5,10 +5,11 @@
 
 **标注:** 🧑 你做(需要遥控器 / sudo / DNS / iPhone) · 🤖 我做(给我 ssh 就行)
 
-**现在到哪了:** 阶段 0 ✅ · 阶段 2 ✅ · 阶段 3 ✅ ——
-后端在 Pi 上跑着、域名通了、电视端的测试入口也加好了。
-**下一步是阶段 1**:把 APK 装到电视上,按那个按钮,看遮罩和遥控器行不行。
-这是整个项目的 go / no-go 点,也是唯一还完全没验过的一层。
+**现在到哪了:** 阶段 0 ✅ · 阶段 1 ✅ · 阶段 2 ✅ · 阶段 3 ✅ ——
+后端在 Pi 上跑着、域名通了、家长 passkey 已注册,
+电视端装好了而且**拦截层已经在真机上验过**:遮罩盖得住 YouTube,遥控器被它吃住。
+go / no-go 那一关过了,剩下的都是配置工作。
+**下一步是阶段 4 的后半段**:在家长端生成配对码,把这台电视配上去。
 
 ---
 
@@ -52,33 +53,43 @@ release 版里 R8 会把 `BuildConfig.DEBUG` 折成 false,整个分支都被丢�
 
 ---
 
-## 阶段 1 — 电视上装包并验证拦截层 🧑 ~20 分钟 ← **下一步**
+## 阶段 1 — 电视上装包并验证拦截层 ✅ 已完成
 
-照 [SIDELOAD.md](SIDELOAD.md) 走。概括:
+**结论:go。** 三种失效模式一个都没出现。
 
-- [ ] 电视:关于 → 版本号连按 7 次 → 开 **网络调试**
-- [ ] `source scripts/env.sh && adb connect <电视IP>:5555`
-      —— **电视上会弹授权框,用遥控器勾「一直允许」**(最容易卡在这)
-- [ ] `./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk`
-- [ ] 电视:设置 → 设备偏好设置 → 无障碍 → 电视守护 → 打开
-- [ ] 打开 app(还没配对,看到的是配对页),按**调试工具 → 测试拦截遮罩**
+验证机型:Sony BRAVIA X85J 系列,**Android 12 / SDK 31**,debug 包 `…braviaguard.debug`
+(debug 构建带 `.debug` 后缀,`adb shell pm list packages` 里要按这个名字找)。
 
-**成功标准:**
-- 遮罩全屏出现,盖住了下面的内容
-- 遥控器上下键能改数字,左右键能换位置
-- 按 OK 有反馈(未配对时会显示「这台电视还没配对,无法校验解锁码」—— 这是对的)
-- 按返回键遮罩消失
+实际走下来的步骤:
 
-**更狠的一次验证(建议做):** 先打开 YouTube 或 Netflix 放一段视频,
-再按 HOME 回到电视守护按那个按钮 —— 真正要确认的是遮罩能盖住**正在播放的视频**,
-而不只是盖住一个静止的界面。
+- [x] 电视:设置 → 系统 → 关于 → **版本号连按 7 次** → 开发者选项 → **USB 调试**
+      —— Android TV 开了 USB 调试之后 5555 就自动监听了,不用再单独找「网络调试」
+- [x] `adb connect <电视IP>:5555` → 第一次回的是 **`unauthorized`**,这是正常的:
+      **电视上会弹授权框,遥控器勾「一律允许」再确定**,之后状态才变 `device`
+- [x] `adb install -r app/build/outputs/apk/debug/app-debug.apk` → `Success`
+- [x] 电视:无障碍 → 最底下「服务」组 → **电视守护 · 规则执行** → 启用
+      → 系统弹「可以收集您输入的所有文字信息」确认框 → 确定
+- [x] 打开 app(未配对,看到的是配对页),按**调试工具 → 测试拦截遮罩**
 
-按了完全没反应、并且下面出现红字「没反应:先去 设置 → …」,
-说明无障碍服务没打开,回上一步。
+**三种失效模式的实测结果:**
 
-**这是整个项目的 go / no-go 点。** 这步过了,后面都是配置工作。
-过不了的话,`app/src/main/kotlin/dev/homelab/braviaguard/enforce/BlockOverlay.kt`
-的窗口参数需要按真机表现调,告诉我现象我来改。
+| 失效模式 | 结果 |
+|---|---|
+| 遮罩根本不出现 | 没发生 —— 全屏出现,app 名 / 额度 / 「明天零点之后可以继续」都对 |
+| 出现了但被视频盖住 | 没发生 —— 遮罩亮着时从 adb 拉起 YouTube,遮罩仍在最上层 |
+| 出现了但遥控器穿透 | 没发生 —— 上下键改数字、左右键换格都生效,底下 YouTube 一个按键都没收到 |
+
+顺带确认的几件事:
+
+- 无障碍一开,面板上那块红色「规则执行已关闭」自动消失
+- avahi 广播可用,电视自己发现了 `BraviaGuard on rpi01 — http://<PiIP>:8443`
+- 返回键能收掉遮罩,收掉之后轮询循环**没有**把它弹回来 —— `previewing` 标志按预期清掉了
+
+**关于那个「完全控制」确认框:** Android 对所有无障碍服务都弹同一段模板文案,
+不是在描述本应用。本应用在 `accessibility_service_config.xml` 里只订阅了
+`typeWindowStateChanged|typeWindowsChanged`(前台应用变化),
+**没有**订阅 `typeViewTextChanged`,也没有声明 `canRequestFilterKeyEvents`
+或 `canPerformGestures` —— 系统只投递已订阅的事件,所以文字输入拿不到。
 
 **要重来:** `adb shell pm clear dev.homelab.braviaguard.debug` 把 app 数据清空。
 
@@ -165,13 +176,13 @@ setup code 从此不被接受,而又没有任何凭据能登录 —— 只能手
 
 ---
 
-## 阶段 4 — 注册 passkey,配对电视 🧑 ~10 分钟(阶段 1 过了就能做)
+## 阶段 4 — 注册 passkey,配对电视 🧑 ← **下一步**(前半段已完成)
 
-- [ ] iPhone Safari 打开 `https://tv.你的域名` —— **不带端口**,见阶段 2 第 1 条
-- [ ] 填名字 + SETUP CODE → **Face ID 注册**
+- [x] iPhone Safari 打开 `https://tv.你的域名` —— **不带端口**,见阶段 2 第 1 条
+- [x] 填名字 + SETUP CODE → **Face ID 注册**
       —— setup code **只对当前这次进程有效**,重启会换一个,
       要重新拿:`podman logs braviaguard | grep "SETUP CODE"`
-- [ ] **分享 → 添加到主屏幕**(这步别跳,否则每次都要在 Safari 里翻)
+- [x] **分享 → 添加到主屏幕**(这步别跳,否则每次都要在 Safari 里翻)
 - [ ] **妈妈的手机同样做一遍** —— 同一个网址 →「这台手机还没注册过」→
       先用你的 Face ID 授权,再给她注册一个 passkey
 - [ ] 家长端 →「电视」→「+ 添加一台电视」→ 拿到 6 位配对码
