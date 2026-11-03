@@ -1,0 +1,31 @@
+# Rootless podman-compose deployment, matching the one-stack-per-directory pattern the
+# rest of this host uses. Paired with a user systemd unit; see deploy/braviaguard.service
+# for the rootful/plain variant and deploy/braviaguard.container for podman >= 4.4
+# Quadlet.
+#
+#   cp .env.example .env && $EDITOR .env
+#   podman-compose up -d
+
+version: '3.8'
+
+services:
+  braviaguard:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: braviaguard
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      # All interfaces on purpose: cloudflared (or any reverse proxy) reaches it on
+      # localhost, while the televisions reach it on the LAN address. Keeping TV
+      # traffic on the LAN means an ISP outage does not stop enforcement.
+      - "8443:8443"
+    volumes:
+      - ./data:/var/lib/braviaguard:z
+    # Rootless podman: "root" in the container is already the unprivileged host user,
+    # so this grants nothing, and it keeps ./data owned by that user -- inspectable
+    # with jq and backed up like any other directory. The image's USER 10001 exists
+    # for a rootful deployment, where the distinction does matter.
+    user: "0:0"
