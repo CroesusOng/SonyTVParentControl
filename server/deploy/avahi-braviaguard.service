@@ -8,12 +8,18 @@
   a URL with a D-pad. The Go binary publishes nothing: a Raspberry Pi already runs
   avahi-daemon, so reusing it keeps an mDNS library out of the server. Keep <port> in
   step with BG_LISTEN.
+
+  scheme=http is right whenever something in front terminates TLS (Cloudflare Tunnel,
+  a reverse proxy): the televisions talk to this host directly on the LAN, in the
+  clear, authenticated by a bearer token. Set it to https only when this process holds
+  the certificate itself -- otherwise the TV builds an https:// URL for a port that
+  speaks plain HTTP and discovery silently produces something that cannot connect.
 -->
 <service-group>
   <name replace-wildcards="yes">BraviaGuard on %h</name>
   <service>
     <type>_braviaguard._tcp</type>
     <port>8443</port>
-    <txt-record>scheme=https</txt-record>
+    <txt-record>scheme=http</txt-record>
   </service>
 </service-group>

@@ -250,6 +250,41 @@ func TestBootstrapIsOpenAndReportsSetupNeeded(t *testing.T) {
 	}
 }
 
+// Dismissing the Face ID prompt is an ordinary thing to do. If the half-finished
+// record counted as a registered parent, the setup code would stop working while no
+// credential existed to sign in with, and first-time setup would be stuck for good.
+func TestAbandonedRegistrationDoesNotLockOutSetup(t *testing.T) {
+	server, st := newTestServer(t)
+
+	// begin, then never finish -- the browser prompt was dismissed.
+	do(t, "POST", server.URL+"/api/parent/register/begin", "",
+		map[string]any{"name": "Mum", "setupCode": "setup-code"}, nil, http.StatusOK)
+
+	var dangling int
+	st.Read(func(s *store.State, _ store.Usage) { dangling = len(s.Parents) })
+	if dangling != 1 {
+		t.Fatalf("expected the half-finished record to exist, got %d", dangling)
+	}
+
+	var bootstrap struct {
+		NeedsSetup bool `json:"needsSetup"`
+	}
+	do(t, "GET", server.URL+"/api/parent/bootstrap", "", nil, &bootstrap, http.StatusOK)
+	if !bootstrap.NeedsSetup {
+		t.Error("setup must still be available after an abandoned registration")
+	}
+
+	// And retrying with the setup code must still be accepted, not demand a session.
+	do(t, "POST", server.URL+"/api/parent/register/begin", "",
+		map[string]any{"name": "Mum", "setupCode": "setup-code"}, nil, http.StatusOK)
+
+	// The retry should have swept the first stub rather than stacking another.
+	st.Read(func(s *store.State, _ store.Usage) { dangling = len(s.Parents) })
+	if dangling != 1 {
+		t.Errorf("abandoned records accumulated: %d", dangling)
+	}
+}
+
 func TestRegistrationRefusesAWrongSetupCode(t *testing.T) {
 	server, _ := newTestServer(t)
 	var apiError model.APIError

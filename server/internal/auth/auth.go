@@ -115,10 +115,21 @@ func toUser(p *store.Parent) (*parentUser, error) {
 
 // ---------- registration ----------
 
-// HasParents reports whether anyone has enrolled a passkey yet.
+// HasParents reports whether anyone has a passkey that can actually sign in.
+//
+// Counting parent records would be wrong. BeginRegistration has to create the record
+// before the browser prompt, so dismissing Face ID leaves one behind with no
+// credentials — and if that counted, the setup code would stop working while no
+// credential existed to sign in with, locking first-time setup out for good.
 func (m *Manager) HasParents() bool {
 	count := 0
-	m.store.Read(func(s *store.State, _ store.Usage) { count = len(s.Parents) })
+	m.store.Read(func(s *store.State, _ store.Usage) {
+		for _, parent := range s.Parents {
+			if len(parent.Credentials) > 0 {
+				count++
+			}
+		}
+	})
 	return count > 0
 }
 
@@ -146,6 +157,9 @@ func (m *Manager) BeginRegistration(w http.ResponseWriter, r *http.Request, name
 	}
 
 	err = m.store.Write(func(s *store.State, _ store.Usage) error {
+		// Sweep up records left by registrations that were started and abandoned, so
+		// they cannot accumulate across retries.
+		s.Parents = dropIncompleteParents(s.Parents)
 		s.Parents = append(s.Parents, store.Parent{
 			ID:              parentID,
 			Name:            name,
@@ -384,6 +398,18 @@ func dropParentWithoutCredentials(parents []store.Parent, id string) []store.Par
 	out := parents[:0]
 	for _, p := range parents {
 		if p.ID == id && len(p.Credentials) == 0 {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// dropIncompleteParents removes every record that never gained a credential.
+func dropIncompleteParents(parents []store.Parent) []store.Parent {
+	out := parents[:0]
+	for _, p := range parents {
+		if len(p.Credentials) == 0 {
 			continue
 		}
 		out = append(out, p)
