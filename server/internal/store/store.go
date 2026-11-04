@@ -30,6 +30,10 @@ const (
 	usageFile      = "usage.json"
 	maxBlockEvents = 200
 	usageRetention = 120 // days
+	// Anyone who can reach the parent app can queue a change, including a child who knows
+	// the device passcode. Queuing one does nothing on its own, but an unbounded queue
+	// would let them bury a real request under a hundred junk ones, so the oldest fall off.
+	maxPendingChanges = 20
 )
 
 type Device struct {
@@ -89,6 +93,10 @@ type State struct {
 	Approvers          []Approver          `json:"approvers"`
 	ApproverCodes      []PairingCode       `json:"approverCodes"`
 	ApproverChallenges []ApproverChallenge `json:"approverChallenges"`
+
+	// Writes the parent app submitted that are waiting for a face. Like the approvers
+	// themselves, nothing in here is device-facing, so queuing one wakes no televisions.
+	Pending []PendingChange `json:"pending"`
 
 	// Revision counts writes. A long-polling television sends back the last one it saw,
 	// which is the only way handleSync can tell "you are up to date, hold the line" from
@@ -291,6 +299,12 @@ func (s *Store) pruneLocked() {
 	s.state.ApproverChallenges = filter(s.state.ApproverChallenges, func(c ApproverChallenge) bool {
 		return c.ExpiresAtMillis > now
 	})
+	s.state.Pending = filter(s.state.Pending, func(p PendingChange) bool {
+		return p.ExpiresAtMillis > now
+	})
+	if len(s.state.Pending) > maxPendingChanges {
+		s.state.Pending = s.state.Pending[len(s.state.Pending)-maxPendingChanges:]
+	}
 
 	if len(s.state.RecentBlocks) > maxBlockEvents {
 		s.state.RecentBlocks = s.state.RecentBlocks[len(s.state.RecentBlocks)-maxBlockEvents:]
@@ -417,6 +431,52 @@ func (s *State) TakeApproverChallenge(id string, nowMillis int64) (string, bool)
 		}
 	}
 	return "", false
+}
+
+// PendingChange is a write the parent app made that is waiting for a face.
+//
+// It stores the request rather than the intent: the action key says which handler will
+// run it and Body is the bytes that handler will read. Nothing is interpreted until it is
+// approved, so a change that is never approved is inert by construction rather than by
+// anyone remembering to check.
+//
+// Summary is what the approver app puts in front of the parent. It is computed when the
+// change is queued, against the state at that moment, because a diff computed later would
+// describe a comparison the parent never saw.
+type PendingChange struct {
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	Body   []byte `json:"body"`
+	// Hex SHA-256 over action and body. The approving signature covers it, so a request
+	// whose content somehow differs from the one the parent read cannot be approved by
+	// that signature.
+	ContentHash     string   `json:"contentHash"`
+	Summary         []string `json:"summary"`
+	CreatedAtMillis int64    `json:"createdAtMillis"`
+	ExpiresAtMillis int64    `json:"expiresAtMillis"`
+}
+
+// PendingByID returns a copy: callers only read these, and handing out a pointer into
+// the slice would invite a mutation that skipped the approval.
+func (s *State) PendingByID(id string) (PendingChange, bool) {
+	for _, p := range s.Pending {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return PendingChange{}, false
+}
+
+// TakePending removes a queued change and says whether it was still good. Removal happens
+// either way: a change that has expired is gone, not left to be found again later.
+func (s *State) TakePending(id string, nowMillis int64) (PendingChange, bool) {
+	for i, p := range s.Pending {
+		if p.ID == id {
+			s.Pending = append(s.Pending[:i], s.Pending[i+1:]...)
+			return p, p.ExpiresAtMillis > nowMillis
+		}
+	}
+	return PendingChange{}, false
 }
 
 // TakePairingCode consumes a code if it is valid. Single use, by design: a code that

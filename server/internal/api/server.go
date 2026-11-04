@@ -63,7 +63,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/parent/apps", s.parentRead(s.handleApps))
 
 	// --- parent app: write, each one behind a fresh Face ID assertion ---
-	s.mux.HandleFunc("PUT /api/parent/policy", s.parentWrite(s.handlePutPolicy))
+	// Rule edits stay in the parent app, where the editor is -- but once a phone is
+	// enrolled they are queued rather than applied, and a face has to approve them. Left
+	// on parentWrite this would have been the way round everything else: handlePutPolicy
+	// replaces the policy wholesale, enforcementEnabled included. See pending.go.
+	s.mux.HandleFunc("PUT /api/parent/policy",
+		s.queuedIfGated(actionPutPolicy, s.handlePutPolicy))
 	// These three hand out, or take away, television time. Once a phone is enrolled as an
 	// approver they need a Secure Enclave signature; until then needsApproval falls
 	// through to parentWrite and nothing has changed. See approver.go.
@@ -82,6 +87,13 @@ func (s *Server) routes() {
 	// face from a phone that is already enrolled. Without that, anyone holding the device
 	// passcode could enrol their own phone, or remove yours.
 	s.mux.HandleFunc("GET /api/parent/approvers", s.parentRead(s.handleListApprovers))
+
+	// The queue. Rejecting needs no face: it is the direction that changes nothing.
+	s.mux.HandleFunc("GET /api/parent/pending", s.parentRead(s.handleListPending))
+	s.mux.HandleFunc("POST /api/parent/pending/{id}/reject",
+		s.parentWrite(s.handleRejectPending))
+	s.mux.HandleFunc("POST /api/parent/pending/{id}/approve",
+		s.needsApproval(s.handleApprovePending))
 	s.mux.HandleFunc("POST /api/parent/approver-code", s.needsApproval(s.handleApproverCode))
 	s.mux.HandleFunc("DELETE /api/parent/approvers/{id}", s.needsApproval(s.handleDeleteApprover))
 
@@ -91,6 +103,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/approver/enroll", s.handleApproverEnroll)
 	s.mux.HandleFunc("GET /api/approver/state", s.approver(s.handleState))
 	s.mux.HandleFunc("POST /api/approver/challenge", s.approver(s.handleApproverChallenge))
+	s.mux.HandleFunc("GET /api/approver/pending", s.approver(s.handleListPending))
+	// Rejecting from the approver app needs only its token, for the same reason it needs
+	// no face in the parent app: it is the direction that changes nothing. Without this
+	// the parent would have to switch apps to say no, and a queue nobody can clear is a
+	// queue people learn to approve without reading.
+	s.mux.HandleFunc("POST /api/approver/pending/{id}/reject",
+		s.approver(s.handleRejectPending))
 
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")

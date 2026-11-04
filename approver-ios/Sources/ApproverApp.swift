@@ -118,12 +118,38 @@ struct ApproveView: View {
 
     @State private var enforcing: Bool?
     @State private var grants = 0
+    @State private var queue: [PendingChange] = []
     @State private var busy = false
     @State private var note: String?
     @State private var problem: String?
 
     var body: some View {
         Form {
+            // First, deliberately. A queued rule change is the thing most worth noticing
+            // when the app is opened, and burying it under the unlock buttons would make
+            // it easy to approve without having read it.
+            if !queue.isEmpty {
+                Section("等你批准(\(queue.count))") {
+                    ForEach(queue) { change in
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(change.summary.enumerated()), id: \.offset) {
+                                _, line in
+                                Text("• " + line).font(.callout)
+                            }
+                            HStack {
+                                Button("批准") { approve(change) }
+                                    .disabled(busy)
+                                Spacer()
+                                Button("驳回", role: .destructive) { reject(change) }
+                                    .disabled(busy)
+                            }
+                            .padding(.top, 2)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+
             Section("电视现在") {
                 switch enforcing {
                 case .some(true): Label("正在拦截", systemImage: "lock.fill")
@@ -182,10 +208,19 @@ struct ApproveView: View {
             let policy = state["policy"] as? [String: Any]
             enforcing = policy?["enforcementEnabled"] as? Bool
             grants = (state["grants"] as? [Any])?.count ?? 0
+            queue = try await backend.pending()
             problem = nil
         } catch {
             problem = error.localizedDescription
         }
+    }
+
+    private func approve(_ change: PendingChange) {
+        act { try await backend.approvePending(change) }
+    }
+
+    private func reject(_ change: PendingChange) {
+        act { try await backend.rejectPending(change) }
     }
 
     private func unlock(_ minutes: Int) {

@@ -69,6 +69,23 @@ struct Credentials {
     }
 }
 
+/// One rule edit waiting for a face.
+///
+/// `summary` is the server's description of what this would change, computed when it was
+/// queued and against the state at that moment. It is the only thing the parent reads
+/// before approving, so a change that produced no summary is one nobody can judge.
+struct PendingChange: Decodable, Identifiable {
+    let id: String
+    let action: String
+    let contentHash: String
+    let summary: [String]
+    let expiresAtMillis: Int64
+}
+
+private struct PendingList: Decodable {
+    let pending: [PendingChange]
+}
+
 enum BackendError: Error, LocalizedError {
     case badAddress
     case http(Int, String)
@@ -160,6 +177,40 @@ struct Backend {
             reason: "解锁电视 \(minutes) 分钟")
     }
 
+    // MARK: - the queue
+
+    /// Rule edits cannot be gated on a signature the way an unlock is: the editor lives
+    /// in the parent app and belongs there. So they are queued, and this is the list of
+    /// what is waiting for a face.
+    func pending() async throws -> [PendingChange] {
+        try await Self.send(
+            PendingList.self,
+            url: credentials.baseURL.appendingPathComponent("/api/approver/pending"),
+            method: "GET", body: nil, headers: authHeaders
+        ).pending
+    }
+
+    /// Approves one queued change, sending back the content hash that was displayed.
+    ///
+    /// The hash is what ties what the parent read to what the server runs. If the two
+    /// ever disagree the server refuses rather than executing something nobody saw.
+    func approvePending(_ change: PendingChange) async throws {
+        let body = try JSONSerialization.data(
+            withJSONObject: ["contentHash": change.contentHash])
+        _ = try await approve(
+            method: "POST", path: "/api/parent/pending/\(change.id)/approve",
+            body: body, reason: change.summary.first ?? "批准一项改动")
+    }
+
+    /// No signature: saying no changes nothing. A queue that is awkward to clear is one
+    /// people learn to approve without reading.
+    func rejectPending(_ change: PendingChange) async throws {
+        _ = try await Self.send(
+            url: credentials.baseURL.appendingPathComponent(
+                "/api/approver/pending/\(change.id)/reject"),
+            method: "POST", body: nil, headers: authHeaders)
+    }
+
     func setEnforcement(_ enabled: Bool) async throws {
         let body = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
         _ = try await approve(
@@ -218,9 +269,29 @@ struct Backend {
         return url
     }
 
+    /// Dictionary form, for the endpoints whose shape is a handful of known keys.
     private static func send(
         url: URL, method: String, body: Data?, headers: [String: String]
     ) async throws -> [String: Any] {
+        let data = try await raw(url: url, method: method, body: body, headers: headers)
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+
+    /// Typed form, for the queue -- a list of records worth having a struct for.
+    private static func send<T: Decodable>(
+        _ type: T.Type, url: URL, method: String, body: Data?, headers: [String: String]
+    ) async throws -> T {
+        let data = try await raw(url: url, method: method, body: body, headers: headers)
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw BackendError.malformed("\(T.self): \(error.localizedDescription)")
+        }
+    }
+
+    private static func raw(
+        url: URL, method: String, body: Data?, headers: [String: String]
+    ) async throws -> Data {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
@@ -235,11 +306,11 @@ struct Backend {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
 
         guard (200..<300).contains(status) else {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
             throw BackendError.http(status, json["error"] as? String ?? "")
         }
-        return json
+        return data
     }
 }

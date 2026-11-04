@@ -293,7 +293,16 @@ async function setEnforcement(enabled) {
 
 async function savePolicy() {
   try {
-    state = await apiWrite('PUT', '/api/parent/policy', draft);
+    const result = await apiWrite('PUT', '/api/parent/policy', draft);
+    // A 202 carries a pending record, not the new state. Assigning it to `state` would
+    // leave state.policy undefined and blank the rule editor on the next render, so the
+    // two shapes have to be told apart before anything is assigned.
+    if (result && result.pendingId) {
+      toast('已提交 — 去审批 App 上确认');
+      await refresh();
+      return;
+    }
+    state = result;
     draft = structuredClone(state.policy);
     toast('规则已保存');
     render();
@@ -373,6 +382,7 @@ function render() {
   renderRules();
   renderDevices();
   renderApprovers();
+  renderPending();
   setConnected(true);
 }
 
@@ -507,6 +517,34 @@ function renderApprovers() {
       } catch (error) { toast(error.message, true); }
     };
     row.append(left, remove);
+    box.append(row);
+  }
+}
+
+function renderPending() {
+  const card = $('pending-card');
+  const box = $('pending');
+  const queue = state.pending || [];
+  card.hidden = queue.length === 0;
+  box.replaceChildren();
+
+  for (const change of queue) {
+    const row = el('div', 'item');
+    const left = el('div');
+    for (const line of change.summary || []) {
+      left.append(el('div', 'meta', '• ' + line));
+    }
+    left.append(el('div', 'meta', `${clockOf(change.expiresAtMillis)} 前有效`));
+    // No approve button here on purpose: approving is the one thing this app must not
+    // be able to do, which is the whole reason the queue exists.
+    const reject = el('button', 'danger', '撤回');
+    reject.onclick = async () => {
+      try {
+        await apiWrite('POST', `/api/parent/pending/${change.id}/reject`);
+        await refresh();
+      } catch (error) { toast(error.message, true); }
+    };
+    row.append(left, reject);
     box.append(row);
   }
 }

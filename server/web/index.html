@@ -140,6 +140,15 @@
     <p class="muted small">保存要过一次 Face ID。电视最多 30 秒内生效。</p>
   </details>
 
+  <!-- 等待审批 -->
+  <div class="card" id="pending-card" hidden>
+    <h2>等待审批</h2>
+    <p class="muted small">
+      注册审批手机之后,改规则不会立刻生效 —— 要在审批 App 上用 Face ID 确认一次。
+    </p>
+    <div id="pending"></div>
+  </div>
+
   <!-- 离线应急码 -->
   <div class="card">
     <h2>离线应急码</h2>

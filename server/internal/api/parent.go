@@ -155,6 +155,9 @@ func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
 		// Reported here rather than from its own endpoint: the parent app has to know
 		// whether unlocks are gated before it offers a button that would be refused.
 		response["approvers"] = approverViews(st)
+		// So the parent app can show that a saved rule change is not finished yet,
+		// without a second request on every refresh.
+		response["pending"] = pendingViews(st, now.UnixMilli())
 	})
 	writeJSON(w, http.StatusOK, response)
 }
