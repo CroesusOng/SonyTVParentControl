@@ -274,7 +274,7 @@ func TestChangedIsClosedByTheNextWrite(t *testing.T) {
 	}
 
 	if err := st.Write(func(state *State, _ Usage) error {
-		state.AppLabels["com.example"] = "Example"
+		state.Grants = append(state.Grants, model.Grant{ID: "g1"})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -291,6 +291,67 @@ func TestChangedIsClosedByTheNextWrite(t *testing.T) {
 	case <-st.Changed():
 		t.Fatal("the channel was not replaced, so every later request returns at once")
 	default:
+	}
+}
+
+// Signing in, signing out and issuing a session all go through Write, and none of them
+// change anything a television is sent. /api/parent/login/begin is public, so if those
+// broadcast, anyone who can load the sign-in page could make every TV resync in a loop.
+func TestWritesNoTVCaresAboutDoNotBroadcast(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var startRevision int64
+	st.Read(func(state *State, _ Usage) { startRevision = state.Revision })
+	changed := st.Changed()
+
+	for name, mutate := range map[string]func(*State){
+		"a session issued at sign-in": func(state *State) {
+			state.Sessions = append(state.Sessions, Session{Token: "t", ParentID: "p"})
+		},
+		"a parent's passkey": func(state *State) {
+			state.Parents = append(state.Parents, Parent{ID: "p", Name: "Parent"})
+		},
+		"block history and app labels": func(state *State) {
+			state.RecentBlocks = append(state.RecentBlocks, BlockEvent{PackageName: "com.example"})
+			state.AppLabels["com.example"] = "Example"
+		},
+		"a pairing code": func(state *State) {
+			state.PairingCodes = append(state.PairingCodes, PairingCode{Code: "123456"})
+		},
+	} {
+		if err := st.Write(func(state *State, _ Usage) error {
+			mutate(state)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-changed:
+			t.Fatalf("%s woke every television", name)
+		default:
+		}
+	}
+
+	var endRevision int64
+	st.Read(func(state *State, _ Usage) { endRevision = state.Revision })
+	if endRevision != startRevision {
+		t.Errorf("revision moved %d -> %d, so every TV would resync for news it cannot see",
+			startRevision, endRevision)
+	}
+
+	// The same store still broadcasts the writes that do matter.
+	if err := st.Write(func(state *State, _ Usage) error {
+		state.Policy.Version++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-changed:
+	case <-time.After(2 * time.Second):
+		t.Error("a policy change did not broadcast")
 	}
 }
 

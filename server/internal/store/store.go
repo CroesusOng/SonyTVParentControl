@@ -11,6 +11,8 @@
 package store
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,25 +153,56 @@ func (s *Store) Read(fn func(*State, Usage)) {
 
 // Write mutates under lock and persists immediately. For changes a parent made.
 //
-// Every successful call bumps the revision and wakes any held sync request, so an unlock
-// tapped on the phone reaches the television in the time one LAN round trip takes rather
-// than on its next poll. A TV posting its own block event comes through here too and will
-// wake itself for nothing; one spare round trip is a better trade than a list of which
-// writes are worth broadcasting, which the next handler would forget to join.
+// A write that a television would act on also bumps the revision and wakes any held sync
+// request, so an unlock tapped on a phone reaches the TV in one round trip instead of on
+// its next poll. Which writes those are is decided by [deviceFacingLocked] rather than by
+// the caller: most of what comes through here is sessions, challenges and block history
+// that no TV reads, and /api/parent/login/begin is a public endpoint, so broadcasting
+// every write would let anyone who can load the sign-in page make every television
+// resync in a loop.
 func (s *Store) Write(fn func(*State, Usage) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	before := s.deviceFacingLocked()
 	if err := fn(&s.state, s.usage); err != nil {
 		return err
 	}
-	// Bumped before persisting, so the number in the file always describes the file.
-	s.state.Revision++
+	news := s.deviceFacingLocked() != before
+	if news {
+		// Bumped before persisting, so the number in the file always describes the file.
+		s.state.Revision++
+	}
 	err := s.persistLocked()
-	// Broadcast even when persisting failed: the in-memory state did change, and that is
-	// the state every reader is about to be served.
-	close(s.changed)
-	s.changed = make(chan struct{})
+	if news {
+		// Broadcast even when persisting failed: the in-memory state did change, and that
+		// is the state every reader is about to be served.
+		close(s.changed)
+		s.changed = make(chan struct{})
+	}
 	return err
+}
+
+// deviceFacingLocked fingerprints exactly the state a television is sent, so comparing it
+// around a write tells us whether any TV needs to hear about that write.
+//
+// Deriving it beats keeping a list of which handlers matter: a handler added later that
+// changes the policy wakes the televisions without having to remember to, and one that
+// only touches a session never will. It has to cover the same fields api.syncResponse
+// reads and no others -- add a field there, add it here.
+func (s *Store) deviceFacingLocked() [sha256.Size]byte {
+	payload, err := json.Marshal(struct {
+		Policy       model.Policy  `json:"p"`
+		Grants       []model.Grant `json:"g"`
+		EscapeSecret string        `json:"e"`
+	}{s.state.Policy, s.state.Grants, s.state.EscapeSecret})
+	if err != nil {
+		// Nothing in there is unmarshalable, but a silent equal-to-itself would mean no TV
+		// ever hears about a change again. Returning a distinct value broadcasts instead.
+		var random [sha256.Size]byte
+		_, _ = rand.Read(random[:])
+		return random
+	}
+	return sha256.Sum256(payload)
 }
 
 // Changed returns a channel the next Write will close.
