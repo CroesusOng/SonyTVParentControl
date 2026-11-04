@@ -314,6 +314,42 @@ accessibility` 的 `Bound services` 里它在,真正的原因是手机上有两�
 `run-as dev.homelab.braviaguard.debug toybox base64 .../guard.preferences_pb` 能直接把
 policy、grants、`unreachable_since_millis` 全拿出来。
 
+## 部署的坑:`podman-compose up -d --build` 不换容器
+
+podman 4.3.1 + podman-compose 0.0.1 上,这条命令会**重建镜像但保留旧容器**,而且整体退出码
+还是 **0**。日志里只有一行不起眼的提示:
+
+```
+podman run --name=braviaguard ...        exit code: 125   ← 名字已占用,创建失败
+podman start braviaguard                 exit code: 0     ← 退回去启动了旧容器
+braviaguard   Up 11 hours ago                             ← 从来没重启
+```
+
+也就是说:**你以为部署了,其实跑的还是旧二进制。** 验证方法是比镜像 ID,不是看退出码:
+
+```bash
+podman images --format '{{.ID}} {{.Repository}}:{{.Tag}}' | grep braviaguard
+podman inspect braviaguard --format '{{.Image}}'
+```
+
+两个对不上就是没换。正确的部署顺序:
+
+```bash
+cd ~/braviaguard/server && git pull --ff-only
+podman-compose up -d --build        # 只为了出镜像
+podman stop braviaguard && podman rm braviaguard
+podman-compose up -d                # 这次名字空着,才真的用新镜像创建
+```
+
+删容器是安全的:数据是 **bind mount**(`./data -> /var/lib/braviaguard`),在宿主机上,
+不随容器走。确认一下再删:
+
+```bash
+podman inspect braviaguard --format '{{range .Mounts}}{{.Type}} {{.Source}}{{"\n"}}{{end}}'
+```
+
+换容器那几秒,电视挂起的请求会收到 502,然后退避 1 秒、2 秒自己接回来 —— 实测 16 秒内恢复。
+
 ## 待办:把电视重新指到局域网 ⬜ 查清了,结论是别急着做
 
 ### 先说值不值得
