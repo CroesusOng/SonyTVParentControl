@@ -314,11 +314,94 @@ accessibility` 的 `Bound services` 里它在,真正的原因是手机上有两�
 `run-as dev.homelab.braviaguard.debug toybox base64 .../guard.preferences_pb` 能直接把
 policy、grants、`unreachable_since_millis` 全拿出来。
 
-**一个待办:** 电视现在绕一圈 Cloudflare 才到同屋的 Pi。Pi 上的 avahi 已经在广播
-`_braviaguard._tcp`(8443,`scheme=http`),把电视重新指到局域网地址能少 245 ms,也能让规则
-执行不依赖 ISP —— 但要重新配对一次,没动。
+## 待办:把电视重新指到局域网 ⬜ 查清了,结论是别急着做
+
+### 先说值不值得
+
+提这件事的原始理由是量到隧道往返 254 ms、局域网 8.5 ms,差 30 倍。**这个理由现在不成立了** ——
+长轮询上线后端到端是 123 ms,改局域网最多再省 100 ms,而这是一天按几次的动作,省下来没人感觉
+得到。30 倍是个好看的比值,不是一个有意义的绝对值。
+
+**剩下一个理由,但它是真的:规则执行现在挂在互联网上。** 链路是
+电视 → ISP → Cloudflare 边缘 → cloudflared(Pi 上另一个 Docker daemon)→ 后端,
+而电视和 Pi 隔三米。任何一环断掉,电视进 `KEEP_ENFORCING`、按最后一份策略无限期执行 ——
+而 `dailyMinutes` 全是 0,`RuleEngine.budgetVerdict` 里的 `used >= limit * 60L` 在 limit=0 时
+**恒为真**,所以**断网 = 电视全锁**。家长这时也打不开家长端(同一条隧道),只能用离线应急码,
+30 秒换一个,一次一次输。
+
+**但这个风险有两个比重新配对更划算的解法:**
+
+1. **把 0 分钟预算换成真实数字**(就在下面的待办清单里)。断网时 `KEEP_ENFORCING` 的含义就从
+   「全锁」变回「照常执行正常规则」。**不动配对,收益最大,先做这个。**
+2. **Pi 上放真证书 + 内网 DNS 把 `tv.你的域名` 解到 Pi 的局域网地址**(`docs/TLS.md` 方案二
+   或方案三)。这样**完全不用重新配对**:电视存的 URL 不变,手机在家时也走短路径,release 包
+   同样能用。
+
+重新指到局域网只修了「电视 → Pi」这一条腿,手机那条还是走隧道;还额外欠一个 DHCP 保留,而且
+只在 debug 包成立(见下)。所以下面的流程是查代码+实测核实过的、备用,但不是下一步该做的事。
+
+### 如果还是要做:先办这个,不然会把电视锁死
+
+**Pi 的 eth0 现在是 DHCP,不是静态**(`inet <PiIP>/24 scope global dynamic`)。而
+`BackendDiscovery.onServiceResolved` 存的是 mDNS **解析出来的 IP**(`info.host.hostAddress`),
+不是主机名 —— 电视会把 `http://<PiIP>:8443` 这个字面地址写进 DataStore。Pi 换了租约,电视就
+指向一个死地址。
+
+接下来这条链比看上去严重:`offlineBehavior` 是 `KEEP_ENFORCING`,而 `offlineGraceMinutes: 60`
+在这个模式下是**死配置** —— `RuleEngine` 只在 `OPEN_AFTER_GRACE` 时才读它。所以后端不可达时
+电视按最后一份策略**无限期**执行;当前策略是「全 0 分钟预算的白名单」,等于全锁。
+
+**所以:先在路由器上给 Pi 做 DHCP 保留(或改静态),再谈重新配对。顺序不能反。**
+
+### 流程
+
+1. **电视上解除配对** —— 打开「电视守护」→ 底部「解除配对」→ 要 6 位**应急码**,不是配对码
+   (手机上「用 Face ID 显示应急码」,30 秒换一个)。这个门槛是故意的:否则绕过整个 app 最
+   简单的办法就是打开它按解除配对,见 `EnforcementController.unpair` 的注释。
+2. **手机生成配对码** —— 家长端 → 配对电视 → Face ID → 6 位码,10 分钟有效,单次使用。
+3. **电视上配对** —— 解除后自动回到配对页,mDNS 列表会自己列出
+   `BraviaGuard on <主机名> — http://<PiIP>:8443`。**直接按那一项。**
+   不要照手机的提示填:手机上写的是「地址填 tv.你的域名」(`app.js` 用的 `location.host`),
+   那是隧道地址,照着填等于什么都没改。
+4. **手机上移除旧设备** —— 设备列表里旧的那条按「移除」。不删也能跑,只是挂一条僵尸记录。
+
+万一第 3 步 mDNS 没出来(组播被拦),退路是手动输 `http://<PiIP>:8443`,或者填回隧道地址。
+这期间电视是未配对状态,也就是不执行任何规则。
+
+### 实测过的两件事
+
+**局域网明文直连不会被跳转。** 这点值得单独验,因为 `main.go` 在隧道模式下把 `RequireHTTPS`
+包在了**整个** handler 外面。但它只在 `X-Forwarded-Proto` 字面等于 `http` 时才发 308,直连没
+这个头,所以放行:
+
+| 请求 | 结果 |
+|---|---|
+| `http://<PiIP>:8443/healthz` | **200**,10 ms |
+| `http://<PiIP>:8443/api/device/sync` | **401 missing_token** —— 可达,没被跳转 |
+| 同上,带 `X-Forwarded-Proto: http` | **308** —— 跳转范围正好 |
+
+**切换不会丢东西。** `clearPairing()` 只删 `backend_base_url` 和 `device_id` 两个键。
+`usage_json`、`policy_json`、`grants_json`、`offline_counter` 全留着,所以**每日限额的计数不会
+被重置**。应急密钥是全家一个(`handleEnroll` 只在 `EscapeSecret == ""` 时才生成),所以重新
+配对后手机上的应急码**完全一样**,不用重新记。
+
+### 两个代价
+
+**服务端今天的时长会分成两段。** `Usage` 是 `deviceID -> 日期 -> 包名 -> 秒`,新设备是新 ID;
+`handleDeleteDevice` 只删设备记录、不删 usage,旧的那段会留在 `state.json` 里。只影响家长端看
+到的数字,不影响执行(电视本地计数见上)。
+
+**这条路只在 debug 版成立。** `app/src/main/res/xml/network_security_config.xml` 是
+`cleartextTrafficPermitted="false"`,只有 `app/src/debug/` 那一份放开了明文。电视现在跑的是
+debug 包,所以能用 —— 但出 release 版之后局域网直连会**直接连不上**,得在 Pi 上放证书,或者给
+私网段加一条 `domain-config` 例外。avahi 那个文件的注释里只说了「明文 + bearer token 是设计
+如此」,没提 release 版会拒绝,这里补上。
+
 
 **再然后:一条一条加规则,每加一条观察一天。**
+- [ ] **先把 0 分钟预算换成真实数字。** 现在的锁定是靠「白名单 + 全 0 分钟预算」实现的,
+      副作用是断网时 `KEEP_ENFORCING` 等于全锁(见上一节)。改成真实限额之后,断网只是
+      照常执行,这是目前性价比最高的一项
 - [ ] 先加一条**没人会碰到的**宵禁(比如 02:00-05:00),打开总开关,确认什么都没坏
 - [ ] 换成真的宵禁(作业时间 / 就寝后)
 - [ ] 加每日限额
