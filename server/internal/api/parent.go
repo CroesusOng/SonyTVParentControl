@@ -152,6 +152,9 @@ func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
 		response["topApps"] = labelled(usage.AppTotals(today), st.AppLabels, 8)
 		response["recentBlocks"] = lastBlocks(st.RecentBlocks, 10)
 		response["hasEscapeSecret"] = st.EscapeSecret != ""
+		// Reported here rather than from its own endpoint: the parent app has to know
+		// whether unlocks are gated before it offers a button that would be refused.
+		response["approvers"] = approverViews(st)
 	})
 	writeJSON(w, http.StatusOK, response)
 }

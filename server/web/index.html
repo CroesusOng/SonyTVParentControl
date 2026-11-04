@@ -157,6 +157,18 @@
     <div id="pairing-code" hidden></div>
   </details>
 
+  <!-- 审批手机 -->
+  <details class="card">
+    <summary><h2>审批手机</h2></summary>
+    <p class="muted small">
+      iPhone 的 passkey 在人脸识别失败时会退回手机密码,所以它只能当登录用。注册一台审批
+      手机之后,下发解锁和关闭拦截都要用审批 App 的 Face ID 签名 —— 知道手机密码也没用。
+    </p>
+    <div id="approvers"></div>
+    <button id="btn-add-approver" class="ghost">+ 注册一台审批手机</button>
+    <div id="approver-code" hidden></div>
+  </details>
+
   <footer>
     <button id="btn-logout" class="ghost small">退出登录</button>
   </footer>

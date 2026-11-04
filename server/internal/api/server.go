@@ -64,13 +64,33 @@ func (s *Server) routes() {
 
 	// --- parent app: write, each one behind a fresh Face ID assertion ---
 	s.mux.HandleFunc("PUT /api/parent/policy", s.parentWrite(s.handlePutPolicy))
-	s.mux.HandleFunc("POST /api/parent/enforcement", s.parentWrite(s.handleEnforcement))
-	s.mux.HandleFunc("POST /api/parent/grants", s.parentWrite(s.handleCreateGrant))
+	// These three hand out, or take away, television time. Once a phone is enrolled as an
+	// approver they need a Secure Enclave signature; until then needsApproval falls
+	// through to parentWrite and nothing has changed. See approver.go.
+	s.mux.HandleFunc("POST /api/parent/enforcement", s.needsApproval(s.handleEnforcement))
+	s.mux.HandleFunc("POST /api/parent/grants", s.needsApproval(s.handleCreateGrant))
 	s.mux.HandleFunc("DELETE /api/parent/grants/{id}", s.parentWrite(s.handleDeleteGrant))
 	s.mux.HandleFunc("POST /api/parent/pairing-code", s.parentWrite(s.handlePairingCode))
 	s.mux.HandleFunc("DELETE /api/parent/devices/{id}", s.parentWrite(s.handleDeleteDevice))
 	s.mux.HandleFunc("GET /api/parent/escape-secret", s.parentWrite(s.handleEscapeSecret))
 	s.mux.HandleFunc("GET /api/parent/escape-code", s.parentWrite(s.handleEscapeCode))
+
+	// --- approver phones ---
+	//
+	// Minting an enrolment code and removing an approver both go through needsApproval, so
+	// the first phone is bootstrapped by the passkey and everything afterwards needs a
+	// face from a phone that is already enrolled. Without that, anyone holding the device
+	// passcode could enrol their own phone, or remove yours.
+	s.mux.HandleFunc("GET /api/parent/approvers", s.parentRead(s.handleListApprovers))
+	s.mux.HandleFunc("POST /api/parent/approver-code", s.needsApproval(s.handleApproverCode))
+	s.mux.HandleFunc("DELETE /api/parent/approvers/{id}", s.needsApproval(s.handleDeleteApprover))
+
+	// The native app's own surface. It carries a bearer token like a television rather
+	// than a session cookie: reads need only the token, and every write it makes lands on
+	// the /api/parent/ routes above, where the signature is checked.
+	s.mux.HandleFunc("POST /api/approver/enroll", s.handleApproverEnroll)
+	s.mux.HandleFunc("GET /api/approver/state", s.approver(s.handleState))
+	s.mux.HandleFunc("POST /api/approver/challenge", s.approver(s.handleApproverChallenge))
 
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")

@@ -109,6 +109,11 @@ async function apiWrite(method, path, body) {
   try {
     return await api(method, path, body);
   } catch (error) {
+    // approval_required is not a fault: it is the Secure Enclave gate doing its job,
+    // and the only cure is the approver app. Say so, rather than showing a code.
+    if (error.code === 'approval_required') {
+      throw new Error('这一步要在审批 App 上用 Face ID 确认 —— 手机密码不行');
+    }
     if (error.code !== 'reauth_required') throw error;
     await login();
     return api(method, path, body);
@@ -367,6 +372,7 @@ function render() {
   renderTopApps();
   renderRules();
   renderDevices();
+  renderApprovers();
   setConnected(true);
 }
 
@@ -474,6 +480,49 @@ function renderDevices() {
     right.append(remove);
     row.append(left, right);
     box.append(row);
+  }
+}
+
+function renderApprovers() {
+  const box = $('approvers');
+  box.replaceChildren();
+  const approvers = state.approvers || [];
+  if (approvers.length === 0) {
+    box.append(el('p', 'muted small',
+      '还没有。现在解锁只要 passkey —— 也就是人脸识别失败时可以用手机密码过。'));
+    return;
+  }
+  for (const approver of approvers) {
+    const row = el('div', 'item');
+    const left = el('div');
+    left.append(el('div', null, approver.name));
+    left.append(el('div', 'meta', `上次审批 ${sinceText(approver.lastUsedMillis)}`));
+    const remove = el('button', 'danger', '移除');
+    remove.onclick = async () => {
+      try {
+        // Also gated on an approval: otherwise removing every approver would be the way
+        // round the whole mechanism.
+        await apiWrite('DELETE', `/api/parent/approvers/${approver.id}`);
+        await refresh();
+      } catch (error) { toast(error.message, true); }
+    };
+    row.append(left, remove);
+    box.append(row);
+  }
+}
+
+async function addApprover() {
+  try {
+    const { code, expiresAtMillis } = await apiWrite('POST', '/api/parent/approver-code');
+    const box = $('approver-code');
+    box.hidden = false;
+    box.replaceChildren(
+      el('div', 'code', code),
+      el('p', 'muted small',
+        `在审批 App 里输这个码。${clockOf(expiresAtMillis)} 前有效,只能用一次。`),
+    );
+  } catch (error) {
+    toast(error.message, true);
   }
 }
 
@@ -758,6 +807,7 @@ $('btn-logout').onclick = async () => {
 $('enforce-toggle').onchange = (event) => setEnforcement(event.target.checked);
 $('btn-show-code').onclick = showEscapeCode;
 $('btn-pair').onclick = pairDevice;
+$('btn-add-approver').onclick = addApprover;
 $('btn-save-policy').onclick = savePolicy;
 
 document.querySelectorAll('.unlock').forEach((button) => {

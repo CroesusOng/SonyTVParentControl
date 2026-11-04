@@ -83,6 +83,13 @@ type State struct {
 	AppLabels    map[string]string `json:"appLabels"`
 	RecentBlocks []BlockEvent      `json:"recentBlocks"`
 
+	// Phones that can authorise an unlock with a real biometric signature. Deliberately
+	// absent from deviceFacingLocked: enrolling one is nothing a television needs to hear
+	// about, so it must not wake every TV in the house.
+	Approvers          []Approver          `json:"approvers"`
+	ApproverCodes      []PairingCode       `json:"approverCodes"`
+	ApproverChallenges []ApproverChallenge `json:"approverChallenges"`
+
 	// Revision counts writes. A long-polling television sends back the last one it saw,
 	// which is the only way handleSync can tell "you are up to date, hold the line" from
 	// "you are behind, answer now" -- the policy has its own version, but grants do not.
@@ -276,6 +283,14 @@ func (s *Store) pruneLocked() {
 	s.state.PairingCodes = filter(s.state.PairingCodes, func(c PairingCode) bool {
 		return c.ExpiresAtMillis > now
 	})
+	s.state.ApproverCodes = filter(s.state.ApproverCodes, func(c PairingCode) bool {
+		return c.ExpiresAtMillis > now
+	})
+	// Unused challenges. Approvers themselves are never pruned: losing one silently would
+	// mean losing the ability to unlock anything.
+	s.state.ApproverChallenges = filter(s.state.ApproverChallenges, func(c ApproverChallenge) bool {
+		return c.ExpiresAtMillis > now
+	})
 
 	if len(s.state.RecentBlocks) > maxBlockEvents {
 		s.state.RecentBlocks = s.state.RecentBlocks[len(s.state.RecentBlocks)-maxBlockEvents:]
@@ -339,6 +354,69 @@ func (s *State) SessionByToken(token string) *Session {
 		}
 	}
 	return nil
+}
+
+// Approver is an iPhone holding a P-256 key in its Secure Enclave, created under
+// .biometryCurrentSet. A signature from it proves two things a passkey assertion cannot:
+// that a face Apple already had on file was presented just now, and that nobody has
+// added another face since, because enrolling one destroys the key.
+//
+// TokenHash is for reading. Writing needs a fresh signature as well, and that is the
+// whole point of this type: the device passcode can reach the session cookie, but it
+// cannot reach the Secure Enclave.
+type Approver struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Uncompressed ANSI X9.63 point, 65 bytes, exactly what SecKeyCopyExternalRepresentation
+	// hands back on the phone. Kept in that form so nothing has to re-encode it.
+	PublicKey       []byte `json:"publicKey"`
+	TokenHash       string `json:"tokenHash"`
+	CreatedAtMillis int64  `json:"createdAtMillis"`
+	LastUsedMillis  int64  `json:"lastUsedMillis"`
+}
+
+// ApproverChallenge is one nonce, good for one signature. Server-issued and single use,
+// so an approval cannot be replayed -- and short-lived, so a signature captured from a
+// parent's phone is worthless by the time anyone could reuse it.
+type ApproverChallenge struct {
+	ID              string `json:"id"`
+	Nonce           string `json:"nonce"`
+	ExpiresAtMillis int64  `json:"expiresAtMillis"`
+}
+
+// ApproverByID returns a pointer into the slice, so callers can stamp LastUsedMillis.
+func (s *State) ApproverByID(id string) *Approver {
+	for i := range s.Approvers {
+		if s.Approvers[i].ID == id {
+			return &s.Approvers[i]
+		}
+	}
+	return nil
+}
+
+// TakeApproverCode consumes an enrolment code. Kept in its own slice rather than shared
+// with PairingCodes: a code minted to pair a television must not enrol something that can
+// authorise unlocks, and vice versa.
+func (s *State) TakeApproverCode(code string, nowMillis int64) bool {
+	for i, c := range s.ApproverCodes {
+		if c.Code == code && c.ExpiresAtMillis > nowMillis {
+			s.ApproverCodes = append(s.ApproverCodes[:i], s.ApproverCodes[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// TakeApproverChallenge consumes a nonce and returns it. Single use: without that, one
+// Face ID prompt could be stretched over any number of approvals.
+func (s *State) TakeApproverChallenge(id string, nowMillis int64) (string, bool) {
+	for i, c := range s.ApproverChallenges {
+		if c.ID == id {
+			s.ApproverChallenges = append(s.ApproverChallenges[:i], s.ApproverChallenges[i+1:]...)
+			return c.Nonce, c.ExpiresAtMillis > nowMillis
+		}
+	}
+	return "", false
 }
 
 // TakePairingCode consumes a code if it is valid. Single use, by design: a code that
