@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -492,6 +493,63 @@ func TestApproverReadsRejectUnknownTokens(t *testing.T) {
 
 	do(t, "GET", server.URL+"/api/approver/state", "not-a-token", nil, nil, http.StatusUnauthorized)
 	do(t, "POST", server.URL+"/api/approver/challenge", "", nil, nil, http.StatusUnauthorized)
+}
+
+// ---------- the contract with the phone ----------
+
+// TestApprovalPayloadMatchesTheiOSApp pins the exact bytes both sides sign.
+//
+// These golden values were produced by the Swift implementation in
+// approver-ios/Sources/ApproverKey.swift and pasted in here. They are the cross-language
+// contract: a stray newline, upper-case hex, or a different hash of an empty body would
+// show up in the field only as "signature does not verify", with nothing to point at. If
+// this test fails, one of the two implementations moved and they have to be put back in
+// step -- do not simply update the constants.
+//
+// The cases cover an empty body, non-ASCII in the body, and an id in the path.
+func TestApprovalPayloadMatchesTheiOSApp(t *testing.T) {
+	cases := []struct {
+		nonce, method, path, body, want string
+	}{
+		{
+			nonce: "nonce-abc", method: "POST", path: "/api/approver/enroll", body: "",
+			want: "62726176696167756172642f617070726f76616c2f76310a6e6f6e63652d6162630a504f" +
+				"53540a2f6170692f617070726f7665722f656e726f6c6c0a653362306334343239386663" +
+				"316331343961666266346338393936666239323432376165343165343634396239333463" +
+				"61343935393931623738353262383535",
+		},
+		{
+			nonce: "424242", method: "POST", path: "/api/parent/grants",
+			body: `{"minutes":30}`,
+			want: "62726176696167756172642f617070726f76616c2f76310a3432343234320a504f53540a" +
+				"2f6170692f706172656e742f6772616e74730a3532666133333137663462313766633330" +
+				"336330363061623333653638336661613964663565306134336134396133616131633530" +
+				"3237383063363433633138",
+		},
+		{
+			nonce: "n3", method: "POST", path: "/api/parent/grants",
+			body: `{"minutes":30,"note":"功课做完了"}`,
+			want: "62726176696167756172642f617070726f76616c2f76310a6e330a504f53540a2f617069" +
+				"2f706172656e742f6772616e74730a376331633163346333663235326366613934373765" +
+				"343261343638613566333561353931313131363436376238383438323338333666303337" +
+				"66396263333531",
+		},
+		{
+			nonce: "n4", method: "DELETE", path: "/api/parent/approvers/abc123", body: "",
+			want: "62726176696167756172642f617070726f76616c2f76310a6e340a44454c4554450a2f61" +
+				"70692f706172656e742f617070726f766572732f6162633132330a653362306334343239" +
+				"386663316331343961666266346338393936666239323432376165343165343634396239" +
+				"33346361343935393931623738353262383535",
+		},
+	}
+
+	for _, test := range cases {
+		got := hex.EncodeToString(
+			approvalPayload(test.nonce, test.method, test.path, []byte(test.body)))
+		if got != test.want {
+			t.Errorf("payload for %s %s\n got %s\nwant %s", test.method, test.path, got, test.want)
+		}
+	}
 }
 
 // ---------- the key parsing itself ----------
