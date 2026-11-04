@@ -64,12 +64,17 @@ func main() {
 		handler = api.RequireHTTPS(cfg.Origins[0], handler)
 	}
 
+	// A device sync request is held open for up to api.MaxSyncWait, and Go starts both
+	// the read and the write deadline when the request header is read rather than when the
+	// handler returns. So both have to clear the hold with room to spare, or long polling
+	// would die as an i/o timeout exactly when it was working. ReadHeaderTimeout stays
+	// short: that is the one that turns away a client dribbling out its headers.
 	httpServer := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           withLogging(handler),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		ReadTimeout:       api.MaxSyncWait + 30*time.Second,
+		WriteTimeout:      api.MaxSyncWait + 30*time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 

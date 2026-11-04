@@ -80,14 +80,72 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// MaxSyncWait caps how long one device sync request may be held open.
+//
+// It has to stay comfortably inside the server's WriteTimeout, because Go starts that
+// clock when the request header is read and not when the handler returns: a handler parked
+// for this long has only the remainder in which to reply. cmd/braviaguardd/main.go derives
+// its timeouts from this constant so the two cannot drift apart.
+const MaxSyncWait = 20 * time.Second
+
 // handleSync is the only endpoint a paired TV needs. The policy is omitted when the TV
-// already has the current version, which keeps a 30-second poll down to a few bytes.
+// already has the current version, which keeps the request down to a few bytes.
+//
+// With `wait` set the request is a long poll: a television that is already up to date gets
+// no reply until a parent changes something, the hold expires, or the connection drops.
+// That turns an unlock tapped on a phone into a LAN round trip instead of a wait for the
+// TV's next poll, which measured 26 seconds in practice. It stays plain request/response,
+// so the app needs no reconnect state machine for the standby cycles a television goes
+// through daily -- a held request that dies is just a failed request, retried.
+//
+// Grant *expiry* is deliberately not pushed. Nothing is written when a grant runs out, so
+// there is no revision to bump; the TV knows every expiry up front and re-locks on its own
+// schedule. See RuleEngine.nextBoundary.
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request, _ store.Device) {
 	knownVersion, _ := strconv.ParseInt(r.URL.Query().Get("policyVersion"), 10, 64)
-	now := time.Now().UnixMilli()
+	knownRevision, _ := strconv.ParseInt(r.URL.Query().Get("revision"), 10, 64)
+	wait := syncWait(r.URL.Query().Get("wait"))
 
+	// One timer for the whole hold. Re-arming it inside the loop would leave a timer per
+	// wake-up alive until it fired.
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	for {
+		// Claimed before the state is read, so a write that lands in between closes this
+		// channel rather than going unnoticed until the device asks again.
+		changed := s.store.Changed()
+		response := s.syncResponse(knownVersion)
+		// Up to date means same revision *and* same policy version. Revision alone is not
+		// enough: a freshly created state file sits at revision zero, which is also what a
+		// device that has never synced sends, and that TV still has a policy to collect.
+		upToDate := response.Revision == knownRevision && response.Policy == nil
+		if wait <= 0 || !upToDate {
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		select {
+		case <-changed:
+			// Round again rather than replying here, so serverTimeMillis and the grant
+			// list describe the moment of the reply.
+		case <-timer.C:
+			// Rebuilt for the same reason: the response in hand was composed when the hold
+			// began, and answering with it would hand the TV a server clock twenty seconds
+			// behind the real one -- in the field it uses to judge its own clock.
+			writeJSON(w, http.StatusOK, s.syncResponse(knownVersion))
+			return
+		case <-r.Context().Done():
+			// Standby, a lost network, or a restarted app. There is nobody to write to.
+			return
+		}
+	}
+}
+
+func (s *Server) syncResponse(knownVersion int64) model.SyncResponse {
+	now := time.Now().UnixMilli()
 	response := model.SyncResponse{ServerTimeMillis: now, Grants: []model.Grant{}}
 	s.store.Read(func(st *store.State, _ store.Usage) {
+		response.Revision = st.Revision
 		if st.Policy.Version != knownVersion {
 			policy := st.Policy
 			response.Policy = &policy
@@ -102,7 +160,18 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request, _ store.Devi
 		// of needing to be re-paired.
 		response.EscapeSecretBase32 = st.EscapeSecret
 	})
-	writeJSON(w, http.StatusOK, response)
+	return response
+}
+
+// syncWait reads the hold a device asked for, clamped to MaxSyncWait. Absent, unparsable
+// or zero means reply at once, which is what an app built before long polling sends and
+// what the WorkManager backstop wants even on a new one.
+func syncWait(raw string) time.Duration {
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return min(time.Duration(seconds)*time.Second, MaxSyncWait)
 }
 
 // handleUsageReport takes running totals for the last few days.

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -201,4 +202,110 @@ func TestDeviceLookups(t *testing.T) {
 			t.Error("lookups should return nil for unknown ids")
 		}
 	})
+}
+
+func TestWriteBumpsTheRevisionAndPersistsIt(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before int64
+	st.Read(func(state *State, _ Usage) { before = state.Revision })
+
+	if err := st.Write(func(state *State, _ Usage) error {
+		state.EscapeSecret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var after int64
+	st.Read(func(state *State, _ Usage) { after = state.Revision })
+	if after != before+1 {
+		t.Fatalf("revision went %d -> %d, want one step", before, after)
+	}
+
+	// Persisted: a restart that reset the counter would look to every television like a
+	// change it had not seen, on every single poll.
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reloaded int64
+	reopened.Read(func(state *State, _ Usage) { reloaded = state.Revision })
+	if reloaded != after {
+		t.Errorf("revision after reopen = %d, want %d", reloaded, after)
+	}
+}
+
+func TestFailedWriteLeavesTheRevisionAlone(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before int64
+	st.Read(func(state *State, _ Usage) { before = state.Revision })
+
+	if err := st.Write(func(_ *State, _ Usage) error {
+		return errors.New("validation said no")
+	}); err == nil {
+		t.Fatal("expected the error to come back")
+	}
+
+	var after int64
+	st.Read(func(state *State, _ Usage) { after = state.Revision })
+	if after != before {
+		t.Errorf("a rejected write moved the revision to %d; every TV would resync for nothing", after)
+	}
+}
+
+func TestChangedIsClosedByTheNextWrite(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Claimed before the write, which is the order a held sync request uses.
+	changed := st.Changed()
+	select {
+	case <-changed:
+		t.Fatal("closed before anything was written")
+	default:
+	}
+
+	if err := st.Write(func(state *State, _ Usage) error {
+		state.AppLabels["com.example"] = "Example"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-changed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a write did not wake the channel a held request would be waiting on")
+	}
+
+	// And the next waiter gets a fresh one rather than the closed one.
+	select {
+	case <-st.Changed():
+		t.Fatal("the channel was not replaced, so every later request returns at once")
+	default:
+	}
+}
+
+// Touch is the sync chatter path. If it broadcast, every usage report a television sent
+// would wake that same television's held request, and the two would spin.
+func TestTouchDoesNotBroadcast(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := st.Changed()
+	st.Touch(func(state *State, _ Usage) { state.Devices = append(state.Devices, Device{ID: "tv"}) })
+	select {
+	case <-changed:
+		t.Error("Touch woke the held-request channel")
+	default:
+	}
 }

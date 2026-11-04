@@ -113,5 +113,15 @@ class ProtocolTest {
         assertEquals(1762000000000L, response.serverTimeMillis)
         assertNull(response.policy)
         assertTrue(response.grants.isEmpty())
+        // A missing revision has to read as zero rather than throw: that is what an older
+        // backend sends, and zero is exactly the "I know nothing" the long poll wants.
+        assertEquals(0L, response.revision)
+    }
+
+    @Test
+    fun `sync response carries the revision the long poll sends back`() {
+        val json = """{"serverTimeMillis":1762000000000,"revision":47,"grants":[]}"""
+        val response = ProtocolJson.decodeFromString(SyncResponse.serializer(), json)
+        assertEquals(47L, response.revision)
     }
 }

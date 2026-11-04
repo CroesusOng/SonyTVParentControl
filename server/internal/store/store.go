@@ -80,6 +80,14 @@ type State struct {
 	EscapeSecret string            `json:"escapeSecretBase32"`
 	AppLabels    map[string]string `json:"appLabels"`
 	RecentBlocks []BlockEvent      `json:"recentBlocks"`
+
+	// Revision counts writes. A long-polling television sends back the last one it saw,
+	// which is the only way handleSync can tell "you are up to date, hold the line" from
+	// "you are behind, answer now" -- the policy has its own version, but grants do not.
+	// Persisted, so a restart does not look like a change to a TV that is already current.
+	// Compared for inequality rather than order, so a wiped state file (revision back to
+	// zero) still reads as "something changed" instead of wedging every device.
+	Revision int64 `json:"revision"`
 }
 
 // Usage is deviceID -> ISO day -> package -> seconds.
@@ -96,6 +104,11 @@ type Store struct {
 	// often would be pointless churn on an SD card, so those changes are flushed on a
 	// timer while policy and credential changes are written through immediately.
 	dirty bool
+
+	// Closed and replaced by every Write. Waiting on a channel rather than registering a
+	// listener means a device that vanishes mid-request leaves nothing behind to clean up:
+	// its goroutine simply stops selecting. Guarded by mu like the rest of this struct.
+	changed chan struct{}
 }
 
 func Open(dir string) (*Store, error) {
@@ -108,7 +121,8 @@ func Open(dir string) (*Store, error) {
 			Policy:    model.DefaultPolicy(),
 			AppLabels: map[string]string{},
 		},
-		usage: Usage{},
+		usage:   Usage{},
+		changed: make(chan struct{}),
 	}
 	if err := readJSON(filepath.Join(dir, stateFile), &s.state); err != nil {
 		return nil, err
@@ -136,13 +150,37 @@ func (s *Store) Read(fn func(*State, Usage)) {
 }
 
 // Write mutates under lock and persists immediately. For changes a parent made.
+//
+// Every successful call bumps the revision and wakes any held sync request, so an unlock
+// tapped on the phone reaches the television in the time one LAN round trip takes rather
+// than on its next poll. A TV posting its own block event comes through here too and will
+// wake itself for nothing; one spare round trip is a better trade than a list of which
+// writes are worth broadcasting, which the next handler would forget to join.
 func (s *Store) Write(fn func(*State, Usage) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := fn(&s.state, s.usage); err != nil {
 		return err
 	}
-	return s.persistLocked()
+	// Bumped before persisting, so the number in the file always describes the file.
+	s.state.Revision++
+	err := s.persistLocked()
+	// Broadcast even when persisting failed: the in-memory state did change, and that is
+	// the state every reader is about to be served.
+	close(s.changed)
+	s.changed = make(chan struct{})
+	return err
+}
+
+// Changed returns a channel the next Write will close.
+//
+// Take it *before* reading the state. A write landing between the read and the wait then
+// closes the channel that is already in hand, instead of slipping through the gap and
+// leaving the caller parked on a reply that was stale when it was built.
+func (s *Store) Changed() <-chan struct{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.changed
 }
 
 // Touch mutates under lock but defers the write to the next flush. For sync chatter.

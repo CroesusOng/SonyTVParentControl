@@ -35,6 +35,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +45,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.time.Duration
 import java.time.Instant
@@ -124,13 +126,29 @@ class EnforcementController(
      */
     @Volatile private var previewing = false
 
+    /**
+     * The backend's revision as of the last applied sync. Sent back on the next request so
+     * the backend can hold it open while there is nothing to say. Kept in memory only: a
+     * restart starts at zero, which costs exactly one immediate reply -- and an immediate
+     * reply is what a freshly started process wants anyway.
+     */
+    @Volatile private var revision: Long = 0
+
     @Volatile private var currentPackage: String? = null
     @Volatile private var sessionStart: Instant? = null
     @Volatile private var blockedPackage: String? = null
 
+    /**
+     * Cuts the tick loop's sleep short. Conflated rather than rendezvous: a wake that
+     * arrives while the loop is awake is kept and makes its next sleep return at once,
+     * so news can never be lost by turning up at the wrong moment.
+     */
+    private val kick = Channel<Unit>(Channel.CONFLATED)
+
     private var service: AccessibilityService? = null
     private var overlay: BlockOverlay? = null
     private var loopJob: Job? = null
+    private var watchJob: Job? = null
 
     private val _snapshot = MutableStateFlow(GuardSnapshot())
     val snapshot: StateFlow<GuardSnapshot> = _snapshot.asStateFlow()
@@ -174,11 +192,18 @@ class EnforcementController(
         service = null
         loopJob?.cancel()
         loopJob = null
+        watchJob?.cancel()
+        watchJob = null
     }
 
     fun startLoop() {
-        if (loopJob?.isActive == true) return
-        loopJob = scope.launch { loop() }
+        if (loopJob?.isActive != true) loopJob = scope.launch { loop() }
+        if (watchJob?.isActive != true) watchJob = scope.launch { watchLoop() }
+    }
+
+    /** Cuts the tick loop's sleep short. Safe from any thread. */
+    fun wake() {
+        kick.trySend(Unit)
     }
 
     // ---------- the signal from the accessibility service ----------
@@ -241,6 +266,10 @@ class EnforcementController(
             service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
             overlay?.show(presentation)
         }
+        // The tick loop may have gone to sleep for half a minute a moment ago. It owns the
+        // three-second cadence that keeps this overlay's countdown moving, and it has to
+        // be told now rather than whenever its own timer next comes round.
+        wake()
         scope.launch { reportBlock(packageName, decision, now) }
     }
 
@@ -392,7 +421,55 @@ class EnforcementController(
             flushSession(now)
             reevaluate(now)
             publish()
-            delay(nextDelayMillis(now))
+            // Interruptible. A held sync coming back, or an app being blocked, must not
+            // have to wait out a sleep that was scheduled before either had happened --
+            // that alone was up to thirty seconds of the old unlock latency.
+            withTimeoutOrNull(nextDelayMillis(now)) { kick.receive() }
+        }
+    }
+
+    /**
+     * Holds one sync request open on the Pi, so an unlock tapped on a parent's phone lands
+     * in a LAN round trip instead of on the next tick.
+     *
+     * Kept apart from the tick loop deliberately. That loop also drives the overlay's
+     * countdown and charges screen time against budgets, so it cannot be parked for twenty
+     * seconds waiting for news. Keeping them separate also means a held connection dying --
+     * which it will, every time the television goes into standby -- degrades to the old
+     * polling behaviour instead of stopping enforcement.
+     */
+    private suspend fun watchLoop() {
+        var backoff = WATCH_BACKOFF_MILLIS
+        while (currentCoroutineContext().isActive) {
+            val state = stored
+            val baseUrl = state.baseUrl
+            val deviceId = state.deviceId
+            if (baseUrl == null || deviceId == null) {
+                delay(WATCH_UNPAIRED_MILLIS)
+                continue
+            }
+            try {
+                val response = backend.sync(
+                    baseUrl = baseUrl,
+                    deviceId = deviceId,
+                    policyVersion = state.policy.version,
+                    revision = revision,
+                    waitSeconds = BackendClient.MAX_WAIT_SECONDS,
+                )
+                backoff = WATCH_BACKOFF_MILLIS
+                val news = response.revision != revision || response.policy != null
+                applySync(response)
+                // Proof the Pi is reachable, so it counts as a sync. The failure side is
+                // left to the tick loop on purpose: a held connection dropping is normal
+                // here, and calling markUnreachable for it would start the offline grace
+                // countdown every time the TV went to standby.
+                store.markSynced(System.currentTimeMillis())
+                if (news) wake()
+            } catch (e: IOException) {
+                Log.i(TAG, "watch disconnected: ${e.message}")
+                delay(backoff)
+                backoff = (backoff * 2).coerceAtMost(WATCH_MAX_BACKOFF_MILLIS)
+            }
         }
     }
 
@@ -401,7 +478,7 @@ class EnforcementController(
         val baseUrl = state.baseUrl ?: return
         val deviceId = state.deviceId ?: return
         try {
-            applySync(backend.sync(baseUrl, deviceId, state.policy.version))
+            applySync(backend.sync(baseUrl, deviceId, state.policy.version, revision))
             store.markSynced(System.currentTimeMillis())
             runCatching { pushUsage(baseUrl, deviceId) }
         } catch (e: IOException) {
@@ -411,6 +488,7 @@ class EnforcementController(
     }
 
     private suspend fun applySync(response: SyncResponse) = writeLock.withLock {
+        revision = response.revision
         response.policy?.let { store.savePolicy(it) }
         response.escapeSecretBase32?.let { secrets.put(SecretStore.KEY_ESCAPE_SECRET, it) }
         // Grants redeemed from an offline code exist only on the TV; the backend has never
@@ -458,7 +536,8 @@ class EnforcementController(
 
     private fun nextDelayMillis(now: Instant): Long {
         val base = when {
-            // The parent has just been told to unlock from their phone; make it feel instant.
+            // Someone is looking at the block screen: keep its countdown moving, and keep
+            // a short poll going as the fallback for a watch connection that is down.
             overlay?.isVisible == true -> 3_000L
             stored.policy.enforcementEnabled -> 30_000L
             else -> 120_000L
@@ -556,6 +635,9 @@ class EnforcementController(
         const val TAG = "Enforcement"
         /** Arbitrary, but a plausible household number reads better than 1 or 999. */
         const val PREVIEW_LIMIT_MINUTES = 120
+        private const val WATCH_BACKOFF_MILLIS = 1_000L
+        private const val WATCH_MAX_BACKOFF_MILLIS = 30_000L
+        private const val WATCH_UNPAIRED_MILLIS = 5_000L
         const val OFFLINE_GRANT_MINUTES = 30L
     }
 }

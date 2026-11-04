@@ -67,10 +67,13 @@ type Grant struct {
 }
 
 type SyncResponse struct {
-	ServerTimeMillis   int64   `json:"serverTimeMillis"`
-	Policy             *Policy `json:"policy,omitempty"`
-	Grants             []Grant `json:"grants"`
-	EscapeSecretBase32 string  `json:"escapeSecretBase32,omitempty"`
+	ServerTimeMillis int64   `json:"serverTimeMillis"`
+	Policy           *Policy `json:"policy,omitempty"`
+	Grants           []Grant `json:"grants"`
+	// Revision is echoed back on the next request so the backend can hold that request
+	// open until something actually changes. See api.handleSync.
+	Revision           int64  `json:"revision"`
+	EscapeSecretBase32 string `json:"escapeSecretBase32,omitempty"`
 }
 
 type DayUsage struct {

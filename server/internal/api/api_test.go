@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -498,5 +499,156 @@ func TestShellAssetsAreNotCacheable(t *testing.T) {
 		if got := response.Header.Get("Cache-Control"); got != "no-store" {
 			t.Errorf("%s: Cache-Control = %q, want no-store", path, got)
 		}
+	}
+}
+
+func TestSyncWaitIsClampedAndOptional(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want time.Duration
+	}{
+		{"", 0},                // an app built before long polling
+		{"0", 0},               // the WorkManager backstop: answer now
+		{"nonsense", 0},        // never hold on a value we did not understand
+		{"-5", 0},              //
+		{"5", 5 * time.Second}, //
+		{"20", MaxSyncWait},    //
+		{"6000", MaxSyncWait},  // a device cannot talk us into holding past the write deadline
+	} {
+		if got := syncWait(tc.raw); got != tc.want {
+			t.Errorf("syncWait(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+}
+
+// syncURL is the request a paired TV makes, long poll or not.
+func syncURL(server *httptest.Server, deviceID string, policyVersion, revision int64, wait int) string {
+	return server.URL + "/api/device/sync?deviceId=" + deviceID +
+		"&policyVersion=" + strconv.FormatInt(policyVersion, 10) +
+		"&revision=" + strconv.FormatInt(revision, 10) +
+		"&wait=" + strconv.Itoa(wait)
+}
+
+func TestLongPollAnswersAtOnceWhenTheTVIsBehind(t *testing.T) {
+	server, st := newTestServer(t)
+	enrolled := enrol(t, server, st)
+
+	// A TV that has never synced sends revision 0 — and so does a backend whose state file
+	// is new. Holding on that match would leave the TV with no policy for the whole wait.
+	started := time.Now()
+	var response model.SyncResponse
+	do(t, "GET", syncURL(server, enrolled.DeviceID, 0, 0, 20), enrolled.Token, nil, &response, http.StatusOK)
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("held a request from a TV with no policy for %v", elapsed)
+	}
+	if response.Policy == nil {
+		t.Error("a TV that knows no version must be sent the policy, wait or no wait")
+	}
+}
+
+func TestLongPollHoldsUntilAParentWrites(t *testing.T) {
+	server, st := newTestServer(t)
+	enrolled := enrol(t, server, st)
+
+	// Catch up first, so the next request has nothing to report and will be held.
+	var current model.SyncResponse
+	do(t, "GET", syncURL(server, enrolled.DeviceID, 0, 0, 0), enrolled.Token, nil, &current, http.StatusOK)
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = st.Write(func(state *store.State, _ store.Usage) error {
+			state.Grants = append(state.Grants, model.Grant{
+				ID:              "grant-under-test",
+				ExpiresAtMillis: time.Now().Add(time.Hour).UnixMilli(),
+			})
+			return nil
+		})
+	}()
+
+	started := time.Now()
+	var woken model.SyncResponse
+	do(t, "GET", syncURL(server, enrolled.DeviceID, current.Policy.Version, current.Revision, 20),
+		enrolled.Token, nil, &woken, http.StatusOK)
+	elapsed := time.Since(started)
+
+	// The point of the whole exercise: the grant arrives on the parent's timing, not on
+	// the television's. Anything near MaxSyncWait means the broadcast never landed and we
+	// are back to waiting out a poll.
+	if elapsed > 3*time.Second {
+		t.Fatalf("took %v to report a write; the hold is not being woken", elapsed)
+	}
+	if elapsed < 100*time.Millisecond {
+		t.Fatalf("returned in %v, before the write happened: the request was not held at all", elapsed)
+	}
+	if woken.Revision == current.Revision {
+		t.Error("revision did not move, so the TV would ask again with the same one")
+	}
+	if len(woken.Grants) != 1 || woken.Grants[0].ID != "grant-under-test" {
+		t.Errorf("the grant that woke the request is missing from it: %+v", woken.Grants)
+	}
+}
+
+func TestLongPollTimesOutQuietly(t *testing.T) {
+	server, st := newTestServer(t)
+	enrolled := enrol(t, server, st)
+
+	var current model.SyncResponse
+	do(t, "GET", syncURL(server, enrolled.DeviceID, 0, 0, 0), enrolled.Token, nil, &current, http.StatusOK)
+
+	started := time.Now()
+	var timedOut model.SyncResponse
+	do(t, "GET", syncURL(server, enrolled.DeviceID, current.Policy.Version, current.Revision, 1),
+		enrolled.Token, nil, &timedOut, http.StatusOK)
+	elapsed := time.Since(started)
+
+	if elapsed < 900*time.Millisecond {
+		t.Fatalf("returned after %v, so the request was not held for the second it asked for", elapsed)
+	}
+	// A hold that simply expired must look like an ordinary empty sync, or the TV would
+	// treat its own heartbeat as news and re-evaluate every rule every twenty seconds.
+	if timedOut.Policy != nil {
+		t.Error("policy should still be omitted when nothing changed")
+	}
+	if timedOut.Revision != current.Revision {
+		t.Errorf("revision moved on a timeout: %d then %d", current.Revision, timedOut.Revision)
+	}
+	if timedOut.ServerTimeMillis <= current.ServerTimeMillis {
+		t.Error("serverTimeMillis must describe the reply, not the moment the hold started")
+	}
+}
+
+func TestAbandonedLongPollDoesNotWedgeTheBackend(t *testing.T) {
+	server, st := newTestServer(t)
+	enrolled := enrol(t, server, st)
+
+	var current model.SyncResponse
+	do(t, "GET", syncURL(server, enrolled.DeviceID, 0, 0, 0), enrolled.Token, nil, &current, http.StatusOK)
+
+	// A television going into standby drops the connection mid-hold. The handler must let
+	// go of it rather than sitting on the store until the hold expires.
+	ctx, cancel := context.WithCancel(context.Background())
+	request, err := http.NewRequestWithContext(ctx, "GET",
+		syncURL(server, enrolled.DeviceID, current.Policy.Version, current.Revision, 20), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+enrolled.Token)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if response, err := http.DefaultClient.Do(request); err == nil {
+			response.Body.Close()
+		}
+	}()
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	<-done
+
+	// Everything still works, and promptly.
+	started := time.Now()
+	var after model.SyncResponse
+	do(t, "GET", syncURL(server, enrolled.DeviceID, 0, 0, 0), enrolled.Token, nil, &after, http.StatusOK)
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("a request after an abandoned hold took %v", elapsed)
 	}
 }

@@ -67,6 +67,12 @@ data class SyncResponse(
     /** Omitted when the device already has this version. */
     val policy: PolicyDto? = null,
     val grants: List<GrantDto> = emptyList(),
+    /**
+     * Echoed back on the next request so the backend can hold that request open until
+     * something actually changes. Defaults to zero, which reads as "I know nothing yet"
+     * and gets an immediate reply.
+     */
+    val revision: Long = 0,
     val escapeSecretBase32: String? = null,
 )
 
