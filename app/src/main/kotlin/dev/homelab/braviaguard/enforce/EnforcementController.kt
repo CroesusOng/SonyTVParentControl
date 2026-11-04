@@ -457,14 +457,22 @@ class EnforcementController(
                     waitSeconds = BackendClient.MAX_WAIT_SECONDS,
                 )
                 backoff = WATCH_BACKOFF_MILLIS
-                val news = response.revision != revision || response.policy != null
-                applySync(response)
-                // Proof the Pi is reachable, so it counts as a sync. The failure side is
-                // left to the tick loop on purpose: a held connection dropping is normal
-                // here, and calling markUnreachable for it would start the offline grace
-                // countdown every time the TV went to standby.
-                store.markSynced(System.currentTimeMillis())
-                if (news) wake()
+                // Most returns are the hold simply expiring with nothing to report. Writing
+                // the policy, the grants and a sync timestamp to DataStore every twenty
+                // seconds regardless would be some four thousand pointless flash writes a
+                // day; the tick loop keeps the sync timestamp fresh anyway. A response with
+                // no news also has nothing in it to apply -- its grant list is the same set
+                // at the same revision, minus any that expired while the request was held,
+                // which the rule engine already treats as inert.
+                if (response.revision != revision || response.policy != null) {
+                    applySync(response)
+                    // Proof the Pi is reachable, so it counts as a sync. The failure side is
+                    // left to the tick loop on purpose: a held connection dropping is normal
+                    // here, and calling markUnreachable for it would start the offline grace
+                    // countdown every time the television went to standby.
+                    store.markSynced(System.currentTimeMillis())
+                    wake()
+                }
             } catch (e: IOException) {
                 Log.i(TAG, "watch disconnected: ${e.message}")
                 delay(backoff)
