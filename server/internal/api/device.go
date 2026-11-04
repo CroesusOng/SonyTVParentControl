@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"log"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -110,6 +111,7 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request, _ store.Devi
 	// wake-up alive until it fired.
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
+	started := time.Now()
 
 	for {
 		// Claimed before the state is read, so a write that lands in between closes this
@@ -126,8 +128,11 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request, _ store.Devi
 		}
 		select {
 		case <-changed:
-			// Round again rather than replying here, so serverTimeMillis and the grant
-			// list describe the moment of the reply.
+			// The one line worth having in the log for this endpoint. Ordinary polls are
+			// skipped as noise (see withLogging), which would otherwise leave nothing at
+			// all between a parent tapping unlock and a television obeying it -- and this
+			// duration is the number that says whether pushing is working.
+			log.Printf("sync: pushed to a held request after %v", time.Since(started).Round(time.Millisecond))
 		case <-timer.C:
 			// Rebuilt for the same reason: the response in hand was composed when the hold
 			// began, and answering with it would hand the TV a server clock twenty seconds
