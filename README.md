@@ -4,12 +4,16 @@
 树莓派上跑一个后端存规则,手机上用 **Face ID** 随时解锁 —— 没有密码。
 
 ```
-Sony BRAVIA (Kotlin, Compose for TV)  ←→  Raspberry Pi 5 (Go, podman)  ←→  iPhone (PWA, passkey)
+Sony BRAVIA (Kotlin, Compose for TV)  ←→  Raspberry Pi 5 (Go, podman)  ←→  iPhone (PWA + 原生审批 App)
 ```
 
-**现状:** 代码完整,`./gradlew assembleDebug` 和 `go test ./...` 都通过,
-核心判定逻辑有 87 个单元测试。**没有在真机上跑过** —— 手上没有 BRAVIA,也没有
-Pi 可以部署。所以下面的步骤是照着平台文档写的,第一次上真机大概率还要调。
+**现状:在真机上跑着** —— 一台 BRAVIA 和一台树莓派 5,2026 年 11 月起。
+`./gradlew assembleDebug` 和 `go test ./... -race` 都通过;核心判定逻辑 88 个单元测试,
+后端 78 个。解锁延迟实测 **123 毫秒**(过程见 [docs/ROLLOUT.md](docs/ROLLOUT.md))。
+
+**唯一还没上真机的是审批 App**(`approver-ios/`):加密核心做过类型检查、和后端的签名
+载荷有测试互相钉住,但界面一行都没验过 —— 那需要 Xcode。见
+[approver-ios/README.md](approver-ios/README.md)。
 
 ---
 
@@ -20,7 +24,7 @@ Pi 可以部署。所以下面的步骤是照着平台文档写的,第一次上�
 - **禁用时段** —— 作业时间、就寝后。支持跨零点
 - **App 白名单 / 黑名单**
 - **使用统计** —— 今天/本周总时长、每个 app 多久、14 天趋势
-- **临时解锁** —— 手机上 Face ID 一下,放行 15/30/60/120 分钟
+- **临时解锁** —— 手机上 Face ID 一下,放行 15/30/60/120 分钟,**123 毫秒**到电视
 - **离线应急码** —— Pi 挂了也能用遥控器输码解锁
 
 ## 架构选择的理由
@@ -37,11 +41,19 @@ Pi 可以部署。所以下面的步骤是照着平台文档写的,第一次上�
 **升级到 Device Owner 只需要改 `EnforcementController.block()` 一个方法** ——
 规则引擎、协议、后端、家长端一行都不用动。
 
-**家长端是 PWA + passkey,不是原生 iOS app。** 全家 iPhone,要 Face ID。原生 app
-用免费开发者账号签的包 **7 天就过期**,两台手机每周都要接电脑重推 —— 这是个长期负担。
-PWA 用 WebAuthn platform authenticator 调 Face ID,Safari「添加到主屏幕」就完事,
-妈妈的手机自己注册一个 passkey 就行。代价是**家长端必须 HTTPS**(见
-[docs/TLS.md](docs/TLS.md))。电视端不受影响,debug 版本直接走 HTTP 就能跑。
+**日常家长端是 PWA + passkey。** 全家 iPhone,要 Face ID。原生 app 用免费开发者账号
+签的包 **7 天就过期**,每台手机每周都要接电脑重推 —— 这是个长期负担。PWA 用 WebAuthn
+platform authenticator 调 Face ID,Safari「添加到主屏幕」就完事,妈妈的手机自己注册一个
+passkey 就行。代价是**家长端必须 HTTPS**(见 [docs/TLS.md](docs/TLS.md))。电视端不受
+影响,debug 版本直接走 HTTP 就能跑。
+
+**但发放电视时间要一个很小的原生 App。** 因为 PWA 有个堵不住的洞,而且是 WebAuthn 自己
+的洞:**iOS 上的 passkey 断言,Face ID 和手机密码都算通过** —— `userVerification` 没有
+「只要生物识别」这个选项,回来的 UV 标志也不说明用了哪种。家里孩子知道手机密码,passkey
+就只能当登录凭证。所以「解锁」和「改规则」改由一个原生 App 批准:它用 Secure Enclave 里
+`.biometryCurrentSet` 的密钥签名 —— **没有密码退路**,而且**往 Face ID 加一张脸密钥就
+失效**。7 天重签的代价因此只落在**一台**手机上,而不是每台。
+详见 [ARCHITECTURE.md 第 11 节](docs/ARCHITECTURE.md)。
 
 **判定逻辑在一个纯 JVM 模块里。** `core-rules` 不碰任何 Android API,所以
 「周五 21:30 到周六 06:30 的宵禁在周六 03:00 该不该拦」是一行断言,不是一次手动测试。
@@ -232,6 +244,7 @@ server/              Go 后端
   internal/totp/     应急码生成
   web/               家长端 PWA(编译进二进制)
   deploy/            Quadlet、systemd、avahi 的 unit 文件
+approver-ios/        原生 iOS 审批 App:Secure Enclave 签名(工程文件要自己在 Xcode 建)
 docs/                架构理由、TLS 方案、sideload 步骤
 scripts/             env.sh(固定工具链)、build-server.sh(交叉编译)
 ```
