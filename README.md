@@ -11,9 +11,9 @@ Sony BRAVIA (Kotlin, Compose for TV)  ←→  Raspberry Pi 5 (Go, podman)  ←�
 `./gradlew assembleDebug` 和 `go test ./... -race` 都通过;核心判定逻辑 88 个单元测试,
 后端 78 个。解锁延迟实测 **123 毫秒**(过程见 [docs/ROLLOUT.md](docs/ROLLOUT.md))。
 
-**唯一还没上真机的是审批 App**(`approver-ios/`):加密核心做过类型检查、和后端的签名
-载荷有测试互相钉住,但界面一行都没验过 —— 那需要 Xcode。见
-[approver-ios/README.md](approver-ios/README.md)。
+**唯一还没上真机的是审批 App**(`approver-ios/`):Xcode 工程就在仓库里,能 build 成功、
+装进模拟器起得来,和后端的签名载荷有测试互相钉住。但 Secure Enclave 那段模拟器验不了 ——
+模拟器根本没有,所以必须真机。见 [approver-ios/README.md](approver-ios/README.md)。
 
 ---
 
@@ -244,7 +244,7 @@ server/              Go 后端
   internal/totp/     应急码生成
   web/               家长端 PWA(编译进二进制)
   deploy/            Quadlet、systemd、avahi 的 unit 文件
-approver-ios/        原生 iOS 审批 App:Secure Enclave 签名(工程文件要自己在 Xcode 建)
+approver-ios/        原生 iOS 审批 App:Secure Enclave 签名,含 Xcode 工程
 docs/                架构理由、TLS 方案、sideload 步骤
 scripts/             env.sh(固定工具链)、build-server.sh(交叉编译)
 ```

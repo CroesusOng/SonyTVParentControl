@@ -30,5 +30,13 @@ braviaguard.env
 *.key
 !web/**/*.key
 
+# Xcode
+# The .xcodeproj itself IS committed -- it is verified (it builds), and without it
+# everyone has to recreate the target by hand. What is not committed is the per-user
+# state Xcode drops inside it: window layout, breakpoints, which scheme was last run.
+**/xcuserdata/
+**/*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+DerivedData/
+
 # macOS
 .DS_Store

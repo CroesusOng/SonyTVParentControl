@@ -28,7 +28,7 @@ WebAuthn 的 `userVerification` 只有 `required / preferred / discouraged`,没�
 | 签名载荷的跨语言契约 | ✅ Swift 产出的黄金值钉在 Go 测试里(空 body / 中文 / 带 id 的路径) |
 | 待审批队列(入队、白名单、哈希绑定、摘要) | ✅ 写完,api 包 58 个测试过,含 `-race` |
 | 三个 `.swift` 文件 | ✅ 对 iOS SDK **编译并链接通过**,零错误零警告 —— 详见下表 |
-| Xcode 工程 | ⬜ 没有,要你在 Xcode 里建(见下) |
+| Xcode 工程 | ✅ 在仓库里,`xcodebuild` 验过能 build,模拟器里起得来 |
 
 Swift 那三个文件验到什么程度(Xcode 27.2,部署目标 iOS 17.0):
 
@@ -55,8 +55,9 @@ Swift 6 那条是余量:新工程默认仍是 Swift 5 模式,但两种模式都�
 里把语言模式切到 6 也不会炸 —— 界面里到处是 `Task { ... }` 里改 `@State`,要是 SwiftUI 的
 `View` 不是 `@MainActor` 隔离的,那些在严格并发下全是数据竞争**错误**而不是警告。它是隔离的。
 
-工程文件我故意没手写:`project.pbxproj` 是个我无法验证的文件,手写出来可能有微妙的错,
-不如你在 Xcode 里点几下,那是对的。
+工程文件本来是我拒绝手写的 —— `project.pbxproj` 手写出来可能有微妙的错,而我当时验不了它。
+装上 Xcode 之后那个理由就没了:现在它能 `xcodebuild` 到 `** BUILD SUCCEEDED **`,还能装进
+模拟器跑起来。验得了的东西才值得替你写。
 
 ## 一、装 Xcode
 
@@ -70,35 +71,41 @@ open "macappstores://apps.apple.com/app/xcode/id497799835"
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
-## 二、建工程
+## 二、打开工程
 
-Xcode → File → New → Project → **iOS → App**,然后:
+工程已经在仓库里了:
+
+```bash
+open approver-ios/BraviaGuardApprover.xcodeproj
+```
+
+**不用新建、不用拖文件、不用手加 Info.plist 的键。** 这些都在工程里设好了:
 
 | 设置 | 值 |
 |---|---|
-| Product Name | `BraviaGuardApprover` |
-| Interface | **SwiftUI** |
-| Language | **Swift** |
-| Storage | None |
-| Testing System | None |
-| Bundle Identifier | `dev.homelab.braviaguard.approver`(免费账号随便填,但要唯一) |
-| Minimum Deployment | **iOS 17.0** 或更高 |
+| Bundle Identifier | `dev.homelab.braviaguard.approver` |
+| Minimum Deployment | iOS 17.0 |
+| `INFOPLIST_KEY_NSFaceIDUsageDescription` | 用 Face ID 确认是你本人在下发解锁 |
+| Targeted Device Family | 只有 iPhone |
+| 源码 | `Sources/` 整个目录同步进来(Xcode 16 的 synchronized group,以后往里加文件不用动工程) |
 
-建好之后:
-
-1. 删掉 Xcode 自己生成的 `ContentView.swift` 和 `<名字>App.swift`(本仓库的
-   `ApproverApp.swift` 里已经有 `@main`,留着会冲突)。
-2. 把 `approver-ios/Sources/` 里的三个 `.swift` 拖进工程,**勾 Copy items if needed 之外
-   也可以选 reference** —— 用 reference 的话以后仓库更新了 Xcode 里自动跟着变。
-3. Target → Info → 加一条:
-
-   | Key | 值 |
-   |---|---|
-   | `NSFaceIDUsageDescription` | `用 Face ID 确认是你本人在下发解锁` |
-
-   **这条不加,第一次用 Face ID 会直接崩。**
+那条 Face ID 的用途说明是建在**编译设置**里的,不是靠你记得去 Info 标签页加一行 ——
+漏了它,第一次调用 Face ID 会直接崩,而且崩在运行时,编译一切正常。
 
 不需要任何 Capability、不需要 App Group、不需要推送。
+
+工程是验过的:
+
+```bash
+xcodebuild -project approver-ios/BraviaGuardApprover.xcodeproj \
+  -scheme BraviaGuardApprover -destination 'generic/platform=iOS Simulator' build
+```
+
+`** BUILD SUCCEEDED **`,零错误零警告。装进 iPhone 17 模拟器也起得来,注册页渲染正常、
+手机名自动填好、没设 Face ID 时注册按钮正确地灰着。
+
+> 模拟器只能验到这里。**模拟器没有 Secure Enclave**,密钥生成必然失败,所以注册流程本身
+> 只能在真机上验 —— 这正是第五节那几条测试要你亲自跑的原因。
 
 ## 三、装到自己手机上(免费,7 天)
 
