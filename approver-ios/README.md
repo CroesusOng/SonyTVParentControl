@@ -26,10 +26,34 @@ WebAuthn 的 `userVerification` 只有 `required / preferred / discouraged`,没�
 |---|---|
 | 后端(注册、挑战、验签、门禁) | ✅ 写完,18 个测试过,含 `-race` |
 | 签名载荷的跨语言契约 | ✅ Swift 产出的黄金值钉在 Go 测试里(空 body / 中文 / 带 id 的路径) |
-| `ApproverKey.swift`、`Backend.swift` | ✅ 对 macOS SDK 类型检查通过,零错误零警告 |
 | 待审批队列(入队、白名单、哈希绑定、摘要) | ✅ 写完,api 包 58 个测试过,含 `-race` |
-| `ApproverApp.swift`(界面) | ⚠️ **一行都没验过** —— `@State` 是 Swift 宏,插件随 Xcode 发布,CLT 里没有 |
+| 三个 `.swift` 文件 | ✅ 对 iOS SDK **编译并链接通过**,零错误零警告 —— 详见下表 |
 | Xcode 工程 | ⬜ 没有,要你在 Xcode 里建(见下) |
+
+Swift 那三个文件验到什么程度(Xcode 27.2,部署目标 iOS 17.0):
+
+| 验法 | 结果 |
+|---|---|
+| 真机 `arm64-apple-ios17.0`,编译 + 链接 | ✅ 退出 0,零诊断,`_main` 在符号表里 |
+| 模拟器 `arm64-apple-ios17.0-simulator`,编译 + 链接 | ✅ 退出 0,零诊断 |
+| **Xcode 27 新建工程的那一套编译设置** | ✅ 退出 0,零诊断 —— 见下 |
+| Swift 5 语言模式 + `-warnings-as-errors` | ✅ 退出 0,**一条警告都没有** |
+| Swift 6 语言模式(严格并发) | ✅ 退出 0 |
+
+链接成功比类型检查说明的多两件事:**框架没漏**(自动链接拉进了 CryptoKit、
+LocalAuthentication、Security、SwiftUI、UIKit,正好是该有的那几个),以及 **`@main` 真的展开了**
+—— `_main` 出现在符号表里,说明 SwiftUI 的宏插件跑过了。那个插件缺失正是这个文件之前一行都
+验不了的原因。
+
+第三条不是我猜的默认值,是从 Xcode 自己的工程模板里抄出来的
+(`Base_ProjectSettings.xctemplate/TemplateInfo.plist`):`SWIFT_VERSION = 5.0`、
+`SWIFT_APPROACHABLE_CONCURRENCY = YES`、`SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES`,
+一共展开成七个 `-enable-upcoming-feature`。里面最容易咬人的是 `MemberImportVisibility` ——
+界面文件只 `import SwiftUI`,却用了 UIKit 的 `UIDevice`。拿那套设置编了一遍,不咬。
+
+Swift 6 那条是余量:新工程默认仍是 Swift 5 模式,但两种模式都干净,所以以后在 Build Settings
+里把语言模式切到 6 也不会炸 —— 界面里到处是 `Task { ... }` 里改 `@State`,要是 SwiftUI 的
+`View` 不是 `@MainActor` 隔离的,那些在严格并发下全是数据竞争**错误**而不是警告。它是隔离的。
 
 工程文件我故意没手写:`project.pbxproj` 是个我无法验证的文件,手写出来可能有微妙的错,
 不如你在 Xcode 里点几下,那是对的。
