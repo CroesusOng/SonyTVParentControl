@@ -494,10 +494,11 @@ class EnforcementController(
      * returned at its own `?: return`, and the app the viewer was sitting in went
      * unenforced until somebody happened to navigate somewhere.
      *
-     * That was observed, not theorised: installing an update at 12:00 left a non-allowlisted
-     * app in the foreground with no block, while the same app had been blocked at 08:58
-     * under the same policy. An update is also exactly when nobody is watching the
-     * television for correctness.
+     * Hardening, not a fix for anything caught in the field. It was written after a
+     * television looked unenforced right after an update, and that turned out to have a
+     * duller cause -- a two hour grant was running, bypassing the list -- so the hole
+     * above is a reading of the state machine rather than something observed. Worth
+     * closing anyway at one null check per tick, but it has never been seen to bite.
      *
      * Runs every tick rather than once at attach. `rootInActiveWindow` can be null for a
      * moment after the service binds, and a second chance thirty seconds later is worth
