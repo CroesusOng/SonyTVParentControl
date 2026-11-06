@@ -296,18 +296,7 @@ func summarisePolicy(current, incoming model.Policy) []string {
 			minutesText(current.WeeklyMinutes), minutesText(incoming.WeeklyMinutes))
 	}
 
-	if len(current.Curfews) != len(incoming.Curfews) {
-		add("宵禁:%d 条 → %d 条", len(current.Curfews), len(incoming.Curfews))
-	}
-	for _, curfew := range incoming.Curfews {
-		if !slices.ContainsFunc(current.Curfews, func(c model.Curfew) bool {
-			return c.ID == curfew.ID && c.Start == curfew.Start && c.End == curfew.End &&
-				slices.Equal(c.Days, curfew.Days)
-		}) {
-			add("宵禁改动:%s %s-%s(%s)",
-				orDash(curfew.Label), curfew.Start, curfew.End, strings.Join(curfew.Days, " "))
-		}
-	}
+	describeCurfews(current.Curfews, incoming.Curfews, add)
 
 	if current.OfflineBehavior != incoming.OfflineBehavior {
 		add("断网行为:%s → %s", current.OfflineBehavior, incoming.OfflineBehavior)
@@ -371,6 +360,113 @@ func difference(from, without []string) []string {
 		}
 	}
 	return out
+}
+
+// describeCurfews reports every curfew an edit adds, removes or changes, matched by id.
+//
+// It replaced a version that walked only the incoming list and otherwise printed a bare
+// count. That version was silent about a deletion whenever something was added in the
+// same edit -- the counts matched, the addition was described, and the curfew that had
+// just been deleted was described by nothing at all.
+//
+// Two things here are easy to get wrong. A curfew the parent app has just created has no
+// id yet: the server assigns one while validating, which happens after this summary is
+// built, so an empty id is never matched against anything and always reads as an
+// addition. And the package list has to be compared, because a curfew that still runs
+// 21:00-07:00 but no longer covers YouTube is a loosening, and that is precisely the
+// change that must not collect an approval unseen.
+func describeCurfews(current, incoming []model.Curfew, add func(string, ...any)) {
+	before := map[string]model.Curfew{}
+	for _, c := range current {
+		if c.ID != "" {
+			before[c.ID] = c
+		}
+	}
+
+	matched := map[string]bool{}
+	for _, c := range incoming {
+		old, found := before[c.ID]
+		if c.ID == "" || !found {
+			add("宵禁新增:%s", curfewText(c))
+			continue
+		}
+		matched[c.ID] = true
+		describeCurfewChange(old, c, add)
+	}
+
+	// Deletions last, walked in the stored policy's own order so that reading the summary
+	// twice reads the same way.
+	for _, c := range current {
+		if c.ID != "" && !matched[c.ID] {
+			add("宵禁删除:%s", curfewText(c))
+		}
+	}
+}
+
+func describeCurfewChange(before, after model.Curfew, add func(string, ...any)) {
+	name := orDash(after.Label)
+	if before.Label != after.Label {
+		add("宵禁改名:%s → %s", orDash(before.Label), name)
+	}
+	if before.Start != after.Start || before.End != after.End {
+		add("宵禁「%s」时间:%s-%s → %s-%s",
+			name, before.Start, before.End, after.Start, after.End)
+	}
+	if !sameSet(before.Days, after.Days) {
+		add("宵禁「%s」星期:%s → %s", name, daysText(before.Days), daysText(after.Days))
+	}
+	describeCurfewScope(name, before.Packages, after.Packages, add)
+}
+
+// describeCurfewScope spells the scope out in words rather than as a list diff, because
+// an empty package list means *every* app. Reported as "packages added", a curfew going
+// from covering everything to covering only YouTube would read like a tightening when it
+// is the opposite.
+func describeCurfewScope(name string, before, after []string, add func(string, ...any)) {
+	wasAll, isAll := len(before) == 0, len(after) == 0
+	switch {
+	case wasAll && isAll:
+		return
+	case wasAll:
+		add("宵禁「%s」范围:全部应用 → 只管 %s", name, strings.Join(after, "、"))
+	case isAll:
+		add("宵禁「%s」范围:只管 %s → 全部应用", name, strings.Join(before, "、"))
+	default:
+		if gone := difference(before, after); len(gone) > 0 {
+			add("宵禁「%s」不再管:%s", name, strings.Join(gone, "、"))
+		}
+		if fresh := difference(after, before); len(fresh) > 0 {
+			add("宵禁「%s」新增管辖:%s", name, strings.Join(fresh, "、"))
+		}
+	}
+}
+
+func curfewText(c model.Curfew) string {
+	text := fmt.Sprintf("%s %s-%s(%s)", orDash(c.Label), c.Start, c.End, daysText(c.Days))
+	if len(c.Packages) > 0 {
+		text += fmt.Sprintf(",只管 %s", strings.Join(c.Packages, "、"))
+	}
+	return text
+}
+
+func daysText(days []string) string {
+	if len(days) == 0 {
+		return "(无)"
+	}
+	return strings.Join(days, " ")
+}
+
+// sameSet compares ignoring order. The parent app rebuilds these lists as it renders, and
+// a summary line that appears because two days swapped places teaches the parent that the
+// lines are noise.
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	x, y := slices.Clone(a), slices.Clone(b)
+	sort.Strings(x)
+	sort.Strings(y)
+	return slices.Equal(x, y)
 }
 
 func onOff(value bool) string {

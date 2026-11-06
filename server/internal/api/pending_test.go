@@ -485,3 +485,101 @@ func pendingByID(t *testing.T, st *store.Store, id string) (store.PendingChange,
 	st.Read(func(s *store.State, _ store.Usage) { found, ok = s.PendingByID(id) })
 	return found, ok
 }
+
+// Four ways a loosening used to reach the approver app undescribed, and one way a
+// non-change used to be described as a change. All five are regressions worth pinning:
+// the whole point of the summary is that an approval cannot cover something the parent
+// did not see, and a summary that cries wolf is how a parent learns to stop reading it.
+func TestTheSummaryDescribesEveryCurfewChange(t *testing.T) {
+	school := model.Curfew{ID: "c1", Label: "上学日", Start: "21:00", End: "07:00",
+		Days: []string{"MONDAY", "TUESDAY"}}
+	weekend := model.Curfew{ID: "c2", Label: "周末", Start: "23:00", End: "08:00",
+		Days: []string{"SATURDAY"}}
+	scoped := func(pkgs ...string) model.Curfew {
+		c := school
+		c.Packages = pkgs
+		return c
+	}
+
+	cases := []struct {
+		name           string
+		before, after  []model.Curfew
+		want, dontWant []string
+	}{
+		{
+			name:   "一删一加,条数不变",
+			before: []model.Curfew{school, weekend},
+			after: []model.Curfew{weekend, {ID: "c3", Label: "随便",
+				Start: "03:00", End: "04:00", Days: []string{"SUNDAY"}}},
+			// The deletion is the dangerous half and used to print nothing at all.
+			want: []string{"宵禁删除:上学日", "宵禁新增:随便"},
+		},
+		{
+			name:   "只删一条",
+			before: []model.Curfew{school, weekend},
+			after:  []model.Curfew{weekend},
+			want:   []string{"宵禁删除:上学日"},
+			// A bare "2 条 → 1 条" does not say which curfew stopped existing.
+			dontWant: []string{"2 条 → 1 条"},
+		},
+		{
+			name:     "时间星期不动,只把一个应用移出管辖",
+			before:   []model.Curfew{scoped("com.google.android.youtube", "com.netflix.ninja")},
+			after:    []model.Curfew{scoped("com.netflix.ninja")},
+			want:     []string{"不再管", "com.google.android.youtube"},
+			dontWant: []string{"没有实质改动"},
+		},
+		{
+			name:   "从管全部应用缩成只管一个 —— 这是放松",
+			before: []model.Curfew{school},
+			after:  []model.Curfew{scoped("com.netflix.ninja")},
+			want:   []string{"全部应用 → 只管", "com.netflix.ninja"},
+		},
+		{
+			name:   "从只管一个扩成管全部 —— 这是收紧",
+			before: []model.Curfew{scoped("com.netflix.ninja")},
+			after:  []model.Curfew{school},
+			want:   []string{"→ 全部应用"},
+		},
+		{
+			name:   "时间改了",
+			before: []model.Curfew{school},
+			after: []model.Curfew{{ID: "c1", Label: "上学日", Start: "22:30", End: "07:00",
+				Days: []string{"MONDAY", "TUESDAY"}}},
+			want: []string{"21:00-07:00 → 22:30-07:00"},
+		},
+		{
+			name:   "家长端新建的宵禁还没有 id",
+			before: []model.Curfew{school},
+			after: []model.Curfew{school, {ID: "", Label: "就寝时间",
+				Start: "21:30", End: "06:30", Days: []string{"SUNDAY"}}},
+			want:     []string{"宵禁新增:就寝时间"},
+			dontWant: []string{"宵禁删除"},
+		},
+		{
+			name:   "只是星期顺序变了,内容没变",
+			before: []model.Curfew{school},
+			after: []model.Curfew{{ID: "c1", Label: "上学日", Start: "21:00", End: "07:00",
+				Days: []string{"TUESDAY", "MONDAY"}}},
+			want:     []string{"没有实质改动"},
+			dontWant: []string{"星期"},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			joined := strings.Join(summarisePolicy(
+				model.Policy{Curfews: c.before}, model.Policy{Curfews: c.after}), "\n")
+			for _, want := range c.want {
+				if !strings.Contains(joined, want) {
+					t.Errorf("the summary never mentions %q:\n%s", want, joined)
+				}
+			}
+			for _, unwanted := range c.dontWant {
+				if strings.Contains(joined, unwanted) {
+					t.Errorf("the summary should not have said %q:\n%s", unwanted, joined)
+				}
+			}
+		})
+	}
+}
