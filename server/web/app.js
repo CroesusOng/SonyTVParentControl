@@ -599,7 +599,7 @@ function renderDailyLimits() {
       if (input.value === '') delete draft.dailyMinutes[day];
       else draft.dailyMinutes[day] = Math.max(0, parseInt(input.value, 10) || 0);
     };
-    box.append(label, input);
+    box.append(label, input, el('span', 'unit', '分钟'));
   });
 }
 
@@ -650,7 +650,12 @@ function renderAppLists() {
       if (input.value === '') delete draft.perAppDailyMinutes[app.packageName];
       else draft.perAppDailyMinutes[app.packageName] = Math.max(0, parseInt(input.value, 10) || 0);
     };
-    limitRow.append(input);
+    // Input and unit kept together, so the row reads "Netflix ... 30 分钟" rather than
+    // leaving a bare number whose unit the parent has to remember.
+    const limitField = el('div', 'field inline');
+    limitField.style.maxWidth = '160px';
+    limitField.append(input, el('span', null, '分钟'));
+    limitRow.append(limitField);
     limitBox.append(limitRow);
   }
 }

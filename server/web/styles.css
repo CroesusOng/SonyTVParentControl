@@ -174,7 +174,8 @@ input[type=time] {
 .applist .item { padding: 10px 0; }
 .applist button { padding: 7px 12px; min-height: 38px; font-size: 14px; }
 
-.daylimits { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center; }
+.daylimits { display: grid; grid-template-columns: auto 1fr auto; gap: 8px 12px; align-items: center; }
+.daylimits .unit { color: var(--muted); font-size: 14px; white-space: nowrap; }
 .daylimits label { color: var(--muted); font-size: 15px; }
 .daylimits input { min-height: 42px; padding: 8px 12px; }
 

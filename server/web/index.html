@@ -111,6 +111,7 @@
     <div id="app-list" class="applist"></div>
 
     <h3>每日限额</h3>
+    <p class="muted small">单位是分钟。<strong>填 0 = 这天完全不开</strong>,留空 = 这天不限时间。</p>
     <div id="daily-limits" class="daylimits"></div>
 
     <h3>每周限额</h3>
@@ -120,6 +121,8 @@
     </label>
 
     <h3>单个 app 限额</h3>
+    <p class="muted small">单位是分钟。<strong>填 0 = 这个 app 完全不开</strong>,留空 = 不单独限制,
+      但用掉的时间照样算进每日总额。单个 app 的限额比每日总额先判定。</p>
     <div id="per-app-limits" class="applist"></div>
 
     <h3>禁用时段</h3>
