@@ -416,6 +416,10 @@ class EnforcementController(
 
     private suspend fun loop() {
         while (currentCoroutineContext().isActive) {
+            // Before the sync, which can sit on a network timeout: adopting what is already
+            // on screen needs nothing from the Pi, and the first pass through this loop is
+            // the one that closes the window described on adoptForegroundIfUnknown.
+            adoptForegroundIfUnknown()
             syncOnce()
             val now = Instant.now()
             flushSession(now)
@@ -479,6 +483,34 @@ class EnforcementController(
                 backoff = (backoff * 2).coerceAtMost(WATCH_MAX_BACKOFF_MILLIS)
             }
         }
+    }
+
+    /**
+     * Picks up whatever was already on screen when the service connected.
+     *
+     * The controller learns the foreground package from TYPE_WINDOW_STATE_CHANGED events
+     * alone, and no such event fires for a window that was already there. So after an app
+     * update, a crash or a television reboot, [currentPackage] stayed null, [reevaluate]
+     * returned at its own `?: return`, and the app the viewer was sitting in went
+     * unenforced until somebody happened to navigate somewhere.
+     *
+     * That was observed, not theorised: installing an update at 12:00 left a non-allowlisted
+     * app in the foreground with no block, while the same app had been blocked at 08:58
+     * under the same policy. An update is also exactly when nobody is watching the
+     * television for correctness.
+     *
+     * Runs every tick rather than once at attach. `rootInActiveWindow` can be null for a
+     * moment after the service binds, and a second chance thirty seconds later is worth
+     * more than a single attempt at the least reliable instant.
+     */
+    private fun adoptForegroundIfUnknown() {
+        if (currentPackage != null) return
+        val pkg = runCatching { service?.rootInActiveWindow?.packageName?.toString() }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() && it != context.packageName }
+            ?: return
+        Log.i(TAG, "adopted foreground after reconnect: $pkg")
+        onForegroundChanged(pkg)
     }
 
     suspend fun syncOnce() {
