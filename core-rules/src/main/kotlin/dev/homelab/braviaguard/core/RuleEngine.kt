@@ -180,7 +180,9 @@ class RuleEngine(
                     reason = BlockReason.APP_BUDGET_EXHAUSTED,
                     limitMinutes = limit,
                     usedSeconds = used,
-                    retryAt = midnight,
+                    // A per-app limit is one number with no variation by day, so a zero is
+                    // a zero tomorrow as well. There is no hour to name.
+                    retryAt = if (limit > 0) midnight else null,
                 )
             }
         }
@@ -192,7 +194,7 @@ class RuleEngine(
                     reason = BlockReason.DAILY_BUDGET_EXHAUSTED,
                     limitMinutes = limit,
                     usedSeconds = used,
-                    retryAt = midnight,
+                    retryAt = nextDailyOpening(policy, local),
                 )
             }
         }
@@ -204,7 +206,8 @@ class RuleEngine(
                     reason = BlockReason.WEEKLY_BUDGET_EXHAUSTED,
                     limitMinutes = limit,
                     usedSeconds = used,
-                    retryAt = nextWeekStart(local),
+                    // Same as the per-app zero: a weekly zero is zero next week too.
+                    retryAt = if (limit > 0) nextWeekStart(local) else null,
                 )
             }
         }
@@ -224,6 +227,31 @@ class RuleEngine(
         weeklySeconds = policy.budgets.weeklyMinutes
             ?.let { (it * 60L - usage.weekCountableSeconds(policy.exemptPackages)).coerceAtLeast(0) },
     )
+
+    /**
+     * The next local midnight that starts a day the daily budget allows something on, or
+     * null when no day in the week does.
+     *
+     * This used to be the next midnight, full stop. That is only right when tomorrow
+     * actually grants something. A household that keeps every day at zero on purpose, and
+     * opens the television by granting time instead, got "available again at 00:00" on the
+     * block screen every evening -- from a screen that would block again one second after
+     * midnight. A promise the rules cannot keep is worse than no promise: it teaches a
+     * child that the screen is not worth reading.
+     *
+     * Seven days is the entire search. The schedule repeats weekly, so a week with nothing
+     * open has nothing open ever.
+     */
+    private fun nextDailyOpening(policy: Policy, local: LocalDateTime): Instant? {
+        var date = local.toLocalDate()
+        repeat(7) {
+            date = date.plusDays(1)
+            // An absent entry is no daily limit at all, which is as open as a day gets.
+            val limit = policy.budgets.dailyLimitFor(date.dayOfWeek)
+            if (limit == null || limit > 0) return date.atStartOfDay(zone).toInstant()
+        }
+        return null
+    }
 
     private fun nextLocalMidnight(local: LocalDateTime): Instant =
         local.toLocalDate().plusDays(1).atStartOfDay(zone).toInstant()

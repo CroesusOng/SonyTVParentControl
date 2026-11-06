@@ -58,16 +58,36 @@ object BlockMessages {
                 }
             }
 
-            BlockReason.APP_BUDGET_EXHAUSTED ->
-                context.getString(
-                    R.string.block_reason_app_budget, appLabel, block.limitMinutes ?: 0,
-                )
+            // A limit of zero is not an allowance that ran out -- there was never one to
+            // spend. "今天的 0 分钟已经用完了" reads like a bug on the screen, and it is the
+            // wording a household that deliberately opens the television only by granting
+            // time would see every single evening.
+            BlockReason.APP_BUDGET_EXHAUSTED -> {
+                val limit = block.limitMinutes ?: 0
+                if (limit > 0) {
+                    context.getString(R.string.block_reason_app_budget, appLabel, limit)
+                } else {
+                    context.getString(R.string.block_reason_app_closed, appLabel)
+                }
+            }
 
-            BlockReason.DAILY_BUDGET_EXHAUSTED ->
-                context.getString(R.string.block_reason_daily_budget, block.limitMinutes ?: 0)
+            BlockReason.DAILY_BUDGET_EXHAUSTED -> {
+                val limit = block.limitMinutes ?: 0
+                if (limit > 0) {
+                    context.getString(R.string.block_reason_daily_budget, limit)
+                } else {
+                    context.getString(R.string.block_reason_daily_closed)
+                }
+            }
 
-            BlockReason.WEEKLY_BUDGET_EXHAUSTED ->
-                context.getString(R.string.block_reason_weekly_budget, block.limitMinutes ?: 0)
+            BlockReason.WEEKLY_BUDGET_EXHAUSTED -> {
+                val limit = block.limitMinutes ?: 0
+                if (limit > 0) {
+                    context.getString(R.string.block_reason_weekly_budget, limit)
+                } else {
+                    context.getString(R.string.block_reason_weekly_closed)
+                }
+            }
         }
 
     /** "06:30" when it is still today, "11-04 06:30" when it is not. */

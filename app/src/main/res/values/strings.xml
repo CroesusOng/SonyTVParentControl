@@ -16,6 +16,10 @@
     <string name="block_reason_daily_budget">Today\'s %1$d min of screen time is used up</string>
     <string name="block_reason_weekly_budget">This week\'s %1$d min of screen time is used up</string>
     <string name="block_retry_at">Available again at %1$s</string>
+    <!-- For a limit that was zero to begin with: no allowance was spent, there was none. -->
+    <string name="block_reason_app_closed">%1$s has no screen time of its own</string>
+    <string name="block_reason_daily_closed">There is no screen time to use on your own today</string>
+    <string name="block_reason_weekly_closed">There is no screen time to use on your own this week</string>
     <string name="block_ask_parent">Ask a parent to unlock it from their phone</string>
     <string name="block_offline_hint">The parent app cannot be reached — use an unlock code instead</string>
     <string name="block_code_label">Unlock code</string>

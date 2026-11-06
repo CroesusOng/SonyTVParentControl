@@ -16,6 +16,10 @@
     <string name="block_reason_daily_budget">今天的 %1$d 分钟已经用完了</string>
     <string name="block_reason_weekly_budget">这周的 %1$d 分钟已经用完了</string>
     <string name="block_retry_at">%1$s 之后可以继续</string>
+    <!-- 限额本来就是 0 的时候用这几条:没有一笔额度被用完,是压根没有额度。 -->
+    <string name="block_reason_app_closed">%1$s 没有可以自己看的时间</string>
+    <string name="block_reason_daily_closed">今天没有可以自己看的时间</string>
+    <string name="block_reason_weekly_closed">这周没有可以自己看的时间</string>
     <string name="block_ask_parent">让家长在手机上解锁</string>
     <string name="block_offline_hint">连不上家长端 —— 请输入解锁码</string>
     <string name="block_code_label">解锁码</string>

@@ -185,6 +185,71 @@ class RuleEngineTest {
         )
     }
 
+    // ---------- retryAt has to be a time that actually arrives ----------
+    //
+    // Every one of these used to answer "the next midnight", which the block screen turns
+    // into "明天 00:00 之后可以继续". With a budget that is zero on purpose, midnight comes
+    // and the screen blocks again a second later.
+
+    @Test
+    fun `a week of zero budgets promises no time at all`() {
+        val everyDayClosed = DayOfWeek.entries.associateWith { 0 }
+        val policy = ENFORCING.copy(budgets = Budgets(dailyMinutesByDay = everyDayClosed))
+        val block = decide(policy = policy) as Decision.Block
+        assertEquals(BlockReason.DAILY_BUDGET_EXHAUSTED, block.reason)
+        assertEquals(0, block.limitMinutes)
+        assertNull(block.retryAt)
+    }
+
+    @Test
+    fun `the promised time skips the days that are also zero`() {
+        // Tuesday is today. Wednesday is shut too, so Thursday is the honest answer.
+        val policy = ENFORCING.copy(
+            budgets = Budgets(
+                dailyMinutesByDay = mapOf(
+                    DayOfWeek.TUESDAY to 0,
+                    DayOfWeek.WEDNESDAY to 0,
+                    DayOfWeek.THURSDAY to 60,
+                ),
+            ),
+        )
+        val block = decide(policy = policy) as Decision.Block
+        assertEquals(at("2026-11-05T00:00"), block.retryAt)
+    }
+
+    @Test
+    fun `a day with no limit at all counts as open`() {
+        // Only Tuesday is listed, so Wednesday has no daily limit -- the widest kind of open.
+        val policy = ENFORCING.copy(budgets = Budgets(dailyMinutesByDay = mapOf(DayOfWeek.TUESDAY to 0)))
+        val block = decide(policy = policy) as Decision.Block
+        assertEquals(at("2026-11-04T00:00"), block.retryAt)
+    }
+
+    @Test
+    fun `a per app budget of zero promises no time`() {
+        // One number for every day, so a zero here is a zero tomorrow as well.
+        val policy = ENFORCING.copy(budgets = Budgets(perAppDailyMinutes = mapOf(NETFLIX to 0)))
+        val block = decide(policy = policy) as Decision.Block
+        assertEquals(BlockReason.APP_BUDGET_EXHAUSTED, block.reason)
+        assertNull(block.retryAt)
+    }
+
+    @Test
+    fun `a per app budget above zero still resets at midnight`() {
+        val policy = ENFORCING.copy(budgets = Budgets(perAppDailyMinutes = mapOf(NETFLIX to 30)))
+        val spent = usage("2026-11-03", today = mapOf(NETFLIX to 30))
+        val block = decide(policy = policy, usage = spent) as Decision.Block
+        assertEquals(at("2026-11-04T00:00"), block.retryAt)
+    }
+
+    @Test
+    fun `a weekly budget of zero promises no time`() {
+        val policy = ENFORCING.copy(budgets = Budgets(weeklyMinutes = 0))
+        val block = decide(policy = policy) as Decision.Block
+        assertEquals(BlockReason.WEEKLY_BUDGET_EXHAUSTED, block.reason)
+        assertNull(block.retryAt)
+    }
+
     // ---------- precedence ----------
 
     @Test
