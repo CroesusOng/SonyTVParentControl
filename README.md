@@ -9,7 +9,7 @@ Sony BRAVIA (Kotlin, Compose for TV)  ←→  Raspberry Pi 5 (Go, podman)  ←�
 
 **现状:在真机上跑着** —— 一台 BRAVIA 和一台树莓派 5,2026 年 11 月起。
 `./gradlew assembleDebug` 和 `go test ./... -race` 都通过;核心判定逻辑 94 个单元测试,
-后端 79 个。解锁延迟实测 **123 毫秒**(过程见 [docs/ROLLOUT.md](docs/ROLLOUT.md))。
+后端 82 个。解锁延迟实测 **123 毫秒**(过程见 [docs/ROLLOUT.md](docs/ROLLOUT.md))。
 
 **唯一还没上真机的是审批 App**(`approver-ios/`):Xcode 工程就在仓库里,能 build 成功、
 装进模拟器起得来,和后端的签名载荷有测试互相钉住。但 Secure Enclave 那段模拟器验不了 ——

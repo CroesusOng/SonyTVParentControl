@@ -9,9 +9,10 @@
 │                     │                               │                      │
 │  AccessibilitySvc   │◀── policy / grants ───────────│  state.json          │
 │  规则引擎(本地判定) │                               │  usage.json          │
-│  TYPE_ACCESSIBILITY │                               └────┬──────────┬──────┘
-│  _OVERLAY 拦截层     │                   passkey session  │          │ bearer + 签名
-└─────────────────────┘                                    │          │
+│  TYPE_ACCESSIBILITY │                               │  lastseen.json       │
+│  _OVERLAY 拦截层     │                               └────┬──────────┬──────┘
+└─────────────────────┘                   passkey session  │          │ bearer + 签名
+                                                           │          │
          ▲                                       ┌─────────▼───┐  ┌───▼──────────────┐
          │  离线应急码(TOTP,不走网络)            │ iPhone      │  │ 审批 App         │
          └───────────────────────────────────────│ PWA+Face ID │  │ 原生 iOS         │

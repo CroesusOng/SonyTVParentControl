@@ -1,7 +1,9 @@
 package store
 
 import (
+	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -368,5 +370,139 @@ func TestTouchDoesNotBroadcast(t *testing.T) {
 	case <-changed:
 		t.Error("Touch woke the held-request channel")
 	default:
+	}
+}
+
+// ---------- what actually reaches the disk ----------
+
+// fileStamp identifies a particular written file. Every write here is a fresh temp file
+// renamed into place, so a rewrite always moves the modification time even when the bytes
+// are identical -- which is exactly what this is watching for.
+func fileStamp(t *testing.T, dir, name string) (time.Time, int64) {
+	t.Helper()
+	info, err := os.Stat(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatalf("stat %s: %v", name, err)
+	}
+	return info.ModTime(), info.Size()
+}
+
+// A television reports usage every few seconds and stamps itself last-seen on every
+// request. Before this, each flush rewrote the whole of state.json -- policy, sessions,
+// and a block history that is by far the largest thing in it -- to record a usage count
+// and a timestamp that do not live there at all.
+func TestAUsageFlushDoesNotRewriteTheStateFile(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Something substantial in state.json, so a needless rewrite would be a real cost.
+	err = st.Write(func(s *State, _ Usage) error {
+		s.Devices = append(s.Devices, Device{ID: "tv1", Name: "Living room", TokenHash: "h"})
+		for i := 0; i < 200; i++ {
+			s.RecentBlocks = append(s.RecentBlocks, BlockEvent{
+				DeviceID: "tv1", PackageName: "com.example.app", Reason: "NOT_IN_ALLOWLIST",
+				AtMillis: time.Now().UnixMilli(),
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stateAt, stateSize := fileStamp(t, dir, stateFile)
+	usageAt, _ := fileStamp(t, dir, usageFile)
+	seenAt, _ := fileStamp(t, dir, lastSeenFile)
+	if stateSize < 10_000 {
+		t.Fatalf("state.json is only %d bytes; this test is not measuring anything", stateSize)
+	}
+	time.Sleep(10 * time.Millisecond) // so a rewrite is distinguishable by mtime
+
+	// Exactly what a television's traffic does: usage in, last-seen stamped.
+	st.Touch(func(s *State, usage Usage) {
+		usage.MergeUsage("tv1", []model.DayUsage{{
+			Day:           time.Now().Format("2006-01-02"),
+			PerAppSeconds: map[string]int64{"com.example.app": 120},
+		}})
+		if d := s.DeviceByID("tv1"); d != nil {
+			d.LastSeenMillis = time.Now().UnixMilli()
+		}
+	})
+	if err := st.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	if at, _ := fileStamp(t, dir, stateFile); !at.Equal(stateAt) {
+		t.Errorf("state.json was rewritten for a change that is not in it (%v -> %v)", stateAt, at)
+	}
+	if at, _ := fileStamp(t, dir, usageFile); at.Equal(usageAt) {
+		t.Error("usage.json was not written, so the usage report was lost")
+	}
+	if at, _ := fileStamp(t, dir, lastSeenFile); at.Equal(seenAt) {
+		t.Error("lastseen.json was not written, so the stamp was lost")
+	}
+}
+
+func TestAFlushWithNothingNewWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Write(func(s *State, _ Usage) error { s.Policy.Version = 3; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	before := map[string]time.Time{}
+	for _, f := range []string{stateFile, usageFile, lastSeenFile} {
+		before[f], _ = fileStamp(t, dir, f)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Touch marks the store dirty without changing anything, which is what a repeat of an
+	// identical usage report amounts to.
+	st.Touch(func(*State, Usage) {})
+	if err := st.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{stateFile, usageFile, lastSeenFile} {
+		if at, _ := fileStamp(t, dir, f); !at.Equal(before[f]) {
+			t.Errorf("%s was rewritten although nothing changed", f)
+		}
+	}
+}
+
+// An upgrade must not make every television look offline: the stamp used to live inside
+// state.json, and the first start after the move has no lastseen.json to read.
+func TestLastSeenIsCarriedOverFromAnOlderStateFile(t *testing.T) {
+	dir := t.TempDir()
+	const legacy = `{"devices":[{"id":"tv1","name":"Living room","tokenHash":"h","lastSeenMillis":1762400000000}]}`
+	if err := os.WriteFile(filepath.Join(dir, stateFile), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Read(func(s *State, _ Usage) {
+		d := s.DeviceByID("tv1")
+		if d == nil {
+			t.Fatal("the device did not survive the upgrade")
+		}
+		if d.LastSeenMillis != 1762400000000 {
+			t.Errorf("last seen = %d, want the value the old file carried", d.LastSeenMillis)
+		}
+	})
+	// And it must not be written back, or the old field would live on forever.
+	if err := st.Write(func(*State, Usage) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, stateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("lastSeenMillis")) {
+		t.Error("state.json still carries lastSeenMillis after being rewritten")
 	}
 }

@@ -11,6 +11,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
@@ -26,8 +27,13 @@ import (
 )
 
 const (
-	stateFile      = "state.json"
-	usageFile      = "usage.json"
+	stateFile = "state.json"
+	usageFile = "usage.json"
+	// Kept apart from state.json on purpose. A television updates its last-seen stamp on
+	// every request, and state.json is 60-odd KB of policy, sessions and block history
+	// that did not change. Writing the whole of it once a minute to move one timestamp is
+	// the single largest source of pointless disk traffic this process has.
+	lastSeenFile   = "lastseen.json"
 	maxBlockEvents = 200
 	usageRetention = 120 // days
 	// Anyone who can reach the parent app can queue a change, including a child who knows
@@ -43,7 +49,13 @@ type Device struct {
 	AndroidRelease  string `json:"androidRelease"`
 	TokenHash       string `json:"tokenHash"`
 	CreatedAtMillis int64  `json:"createdAtMillis"`
-	LastSeenMillis  int64  `json:"lastSeenMillis"`
+	// Lives in lastseen.json, not here; in memory it stays on the device so nothing that
+	// reads it has to know that.
+	LastSeenMillis int64 `json:"-"`
+	// Only so an upgrade can pick the value out of a state.json written before
+	// lastseen.json existed. Zeroed once read, and omitempty then keeps it out of every
+	// file written afterwards.
+	LegacyLastSeenMillis int64 `json:"lastSeenMillis,omitempty"`
 }
 
 type PairingCode struct {
@@ -126,6 +138,11 @@ type Store struct {
 	// listener means a device that vanishes mid-request leaves nothing behind to clean up:
 	// its goroutine simply stops selecting. Guarded by mu like the rest of this struct.
 	changed chan struct{}
+
+	// What each file held when it was last written. A flush that would produce the same
+	// bytes then skips the temp file, the fsync and the rename rather than doing all
+	// three to no effect.
+	written map[string][]byte
 }
 
 func Open(dir string) (*Store, error) {
@@ -140,6 +157,7 @@ func Open(dir string) (*Store, error) {
 		},
 		usage:   Usage{},
 		changed: make(chan struct{}),
+		written: map[string][]byte{},
 	}
 	if err := readJSON(filepath.Join(dir, stateFile), &s.state); err != nil {
 		return nil, err
@@ -156,7 +174,38 @@ func Open(dir string) (*Store, error) {
 	if s.state.Policy.Version == 0 {
 		s.state.Policy = model.DefaultPolicy()
 	}
+	if err := s.loadLastSeen(); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+// loadLastSeen restores the stamps from their own file, falling back to the copy an older
+// state.json carried so that an upgrade does not make every television look offline.
+func (s *Store) loadLastSeen() error {
+	seen := map[string]int64{}
+	if err := readJSON(filepath.Join(s.dir, lastSeenFile), &seen); err != nil {
+		return err
+	}
+	for i := range s.state.Devices {
+		d := &s.state.Devices[i]
+		if at, ok := seen[d.ID]; ok {
+			d.LastSeenMillis = at
+		} else if d.LegacyLastSeenMillis != 0 {
+			d.LastSeenMillis = d.LegacyLastSeenMillis
+		}
+		// Read once, never written again.
+		d.LegacyLastSeenMillis = 0
+	}
+	return nil
+}
+
+func (s *Store) lastSeenLocked() map[string]int64 {
+	seen := make(map[string]int64, len(s.state.Devices))
+	for _, d := range s.state.Devices {
+		seen[d.ID] = d.LastSeenMillis
+	}
+	return seen
 }
 
 // Read gives a consistent view to a caller that only looks.
@@ -267,13 +316,39 @@ func (s *Store) StartFlusher(interval time.Duration, done <-chan struct{}) {
 
 func (s *Store) persistLocked() error {
 	s.pruneLocked()
-	if err := writeJSON(filepath.Join(s.dir, stateFile), s.state); err != nil {
-		return err
-	}
-	if err := writeJSON(filepath.Join(s.dir, usageFile), s.usage); err != nil {
-		return err
+	for _, f := range []struct {
+		name  string
+		value any
+	}{
+		{stateFile, s.state},
+		{usageFile, s.usage},
+		{lastSeenFile, s.lastSeenLocked()},
+	} {
+		if err := s.writeIfChangedLocked(f.name, f.value); err != nil {
+			return err
+		}
 	}
 	s.dirty = false
+	return nil
+}
+
+// writeIfChangedLocked encodes first and compares against what the file already holds.
+// Encoding 60 KB costs microseconds; the temp file, the fsync and the rename it avoids do
+// not. Most flushes here are a television reporting usage, which leaves state.json
+// byte-for-byte identical.
+func (s *Store) writeIfChangedLocked(name string, value any) error {
+	encoded, err := encodeJSON(value)
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", name, err)
+	}
+	if bytes.Equal(encoded, s.written[name]) {
+		return nil
+	}
+	if err := writeFileAtomic(filepath.Join(s.dir, name), encoded); err != nil {
+		return err
+	}
+	// Only after the rename, so a failed write is retried rather than remembered.
+	s.written[name] = encoded
 	return nil
 }
 
@@ -585,7 +660,19 @@ func readJSON(path string, target any) error {
 	return nil
 }
 
-func writeJSON(path string, value any) error {
+func encodeJSON(value any) ([]byte, error) {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetIndent("", "  ") // readable with jq, editable by hand
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// writeFileAtomic replaces a file or leaves the previous one untouched: a power cut
+// during the write loses the temp file, not the data.
+func writeFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".write-*")
 	if err != nil {
@@ -594,11 +681,9 @@ func writeJSON(path string, value any) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 
-	encoder := json.NewEncoder(tmp)
-	encoder.SetIndent("", "  ") // readable with jq, editable by hand
-	if err := encoder.Encode(value); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		return fmt.Errorf("encode %s: %w", path, err)
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
